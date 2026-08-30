@@ -8,6 +8,7 @@ dependencies = [
   "uvicorn",
   "httpx",
   "jinja2",
+  "python-multipart",
 ]
 
 [project.optional-dependencies]
