@@ -290,6 +290,35 @@ class Engine:
         if "named_party" not in cols:
             c.execute("ALTER TABLE records ADD COLUMN named_party TEXT")
         c.commit()
+        self._demote_leftover_legal_missing_named_party()
+
+    def _demote_leftover_legal_missing_named_party(self):
+        """S12: leftover clean legal with empty or missing named_party is field-fail, not silent drop."""
+        rows = self.conn.execute(
+            """SELECT * FROM records
+               WHERE kind = 'legal'
+                 AND (named_party IS NULL OR TRIM(named_party) = '')"""
+        ).fetchall()
+        for r in rows:
+            d = dict(r)
+            locator = d.get("locator") or d["record_id"]
+            item = {
+                "locator": locator,
+                "text": d.get("text") or "",
+                "kind": d.get("kind"),
+                "channel": d.get("channel"),
+                "title": d.get("title") or "",
+                "event_time": d.get("event_time"),
+                "published_time": d.get("published_time"),
+                "url": d.get("url") or "",
+                "named_party": d.get("named_party"),
+                "completeness": d.get("completeness"),
+            }
+            job = {"id": d.get("job_id") or "", "source": d.get("source") or "legal"}
+            self._quarantine(job, item, "field-fail", "missing named_party (legal)")
+            self.conn.execute("DELETE FROM records WHERE record_id=?", (d["record_id"],))
+        if rows:
+            self.conn.commit()
 
     def _job_row(self, job_id):
         r = self.conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -1082,7 +1111,7 @@ class Engine:
         if source == "legal" or kind == "legal":
             raw_party = it.get("named_party")
             if raw_party is None or str(raw_party).strip() == "":
-                return {"ok": False, "reason": "field-fail", "rule": "named_party"}
+                return {"ok": False, "reason": "field-fail", "rule": "missing named_party (legal)"}
             party = str(raw_party).strip()
             if party == "the administration":
                 return {"ok": False, "reason": "field-fail", "rule": "named_party"}
