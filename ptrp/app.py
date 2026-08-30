@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -924,7 +925,7 @@ def create_app(engine: Engine | None = None, background: bool = False) -> FastAP
                 dup_action=_blank(body.get("dup_action")),
             )
             if r.ok:
-                engine.drain()
+                await asyncio.to_thread(engine.drain)
                 if r.job and r.job.get("id"):
                     try:
                         r.job = engine.get_job(r.job["id"])
@@ -985,7 +986,7 @@ def create_app(engine: Engine | None = None, background: bool = False) -> FastAP
     async def retry(job_id: str, request: Request):
         r = engine.retry(job_id)
         if r.ok:
-            engine.drain()
+            await asyncio.to_thread(engine.drain)
         if _wants_json(request):
             return JSONResponse(_json_safe({"ok": r.ok, "job": r.job, "message": r.message, "overlay": r.overlay}))
         if r.ok:
@@ -1123,7 +1124,7 @@ def create_app(engine: Engine | None = None, background: bool = False) -> FastAP
     @app.post("/worker/start")
     async def worker_start(request: Request):
         engine = _eng()
-        engine.start_worker()
+        await asyncio.to_thread(engine.start_worker)
         if _wants_json(request):
             return JSONResponse({"ok": True})
         return _html_any(request)

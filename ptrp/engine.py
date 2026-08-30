@@ -519,6 +519,8 @@ class Engine:
         if self._meta_get("last_schedule_tick") == tick_key:
             return
         is_monday = now_et.weekday() == 0
+        enqueued = 0
+        due = 0
         for source in SOURCES:
             cad = CADENCE.get(source)
             if cad is None:
@@ -528,14 +530,18 @@ class Engine:
                 continue
             if cad == "weekly" and not is_monday:
                 continue
-            occupants = self._occupants_for(self._touched("incremental", source))
-            if occupants:
-                continue
-            self.enqueue_job(
+            due += 1
+            r = self.enqueue_job(
                 type="incremental", source=source, triggered_by="schedule",
                 confirm_disabled=True,
+                dup_action="queue_behind",
             )
-        self._meta_set("last_schedule_tick", tick_key)
+            if r.ok:
+                enqueued += 1
+        # Recording last_schedule_tick without enqueue is a fail when sources
+        # were due. Occupied sources still get a queued incremental for this tick.
+        if enqueued > 0 or due == 0:
+            self._meta_set("last_schedule_tick", tick_key)
 
     def _touched(self, job_type, source):
         if job_type in GLOBAL_TYPES or source == "global":
