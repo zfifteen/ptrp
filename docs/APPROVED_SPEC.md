@@ -2,12 +2,14 @@
 
 **Artifact:** Spec  
 **State:** Approved  
-**Version:** v5  
+**Version:** v7  
 **Date:** 2026-08-30  
 **Owner:** Specification Writer  
-**Prior:** v4 is superseded. Verdict: `/workspace/ptrp-spec-draft-review-v5.md`. This Spec names CR-E1 and CR-E2. S1–S9 remain closed.  
-**UI/UX:** pulled from UI/UX Ninja into §8 and `/workspace/ptrp-ui-mockups/index.html`.  
-**Consumable Spec:** this file only. Engineer and QA consume this file. `/workspace/ptrp-spec-approved-v4.md` is superseded and is not consumable. Historical pipeline and v0-spec files are not imported.
+**Verdict:** `/workspace/ptrp-spec-draft-review-v7.md` (APPROVED). Frozen snapshot `/workspace/ptrp-spec-approved-v7.md`. Frozen v5 at `/workspace/ptrp-spec-approved-v5.md` is history. Engineer and QA consume this file. S1–S12, CR-E1, CR-E2, and CR-QA-1 through CR-QA-11 are closed. Do not open v8.  
+**UI/UX:** pulled from UI/UX Ninja into §8 and `/workspace/ptrp-ui-mockups/index.html` (README `/workspace/ptrp-ui-mockups/README.md`).  
+**Consumable Spec:** this file. Historical pipeline and v0-spec files are not imported.  
+**Advisory A1:** a leftover §6 “Each record returned” list without `named_party` is struck. S12 wins. The list below includes `named_party`. Do not implement the stale omit.  
+**Advisory A2:** packet leftover “Global jobs are not this mutex” remains struck by §5.5 / A5b. Do not reopen S2.
 
 This Spec does not name a language, framework, database, host, or vendor.
 
@@ -36,7 +38,10 @@ This Spec does not name a language, framework, database, host, or vendor.
 - Source freshness badges: cadence stale and 24h stale. Both shown. App does not store a live-bet-window object. Automated `not-ready` from staleness uses cadence stale only.
 - Read actions on the Records screen: `Search`, `GetRecord`, `GetPreference`, `ExportRetrievalSet`.
 - Books and campaign are required sources. Books use `channel = other` and are not mention-usable.
-- Display timezone America/New_York. Stored times UTC.
+- Display timezone America/New_York. Stored times UTC. Operator screens never show a UTC timestamp.
+- Operator worker Stop and Start (CR-QA-1). Operator Restart the app (CR-QA-2). Operator Records-reads down (CR-QA-3). Operator Fail next load (CR-QA-4). Per-source Connector `ok` / `network` / `auth` / `parse` (CR-QA-5). Targeted Operator item (CR-QA-6, CR-QA-7, CR-QA-8). Probe clock (CR-QA-10). Topic rows appear when a topic is added, before ingest (CR-QA-11).
+- Clean legal field `named_party`. Clean legal requires `named_party` equal to `Donald Trump`. Operator surfaces for that field: `ov-record` (kind `legal`), GetRecord, and Export (S12).
+- Targeted mode Query vs Operator item (S10). Probe-clock weekday 09:00 tick (S11).
 
 ## 2. Out of scope
 
@@ -48,6 +53,7 @@ This Spec does not name a language, framework, database, host, or vendor.
 - Speech, voice, or synthetic Trump text.
 - `written_other` as a channel. Channels are only `spoken`, `written_social`, `written_official`, `legal`, `other`.
 - Venue, venue picker, venue-scoped thin, venue-scoped ready.
+- Mock-only worker switch that does not apply S5. Typed DELETE of the base as a restart. A UTC column on an operator screen.
 - Upcoming-calendar source or retrieve.
 - `remark_count` / `decision_value` product surfaces.
 - “The administration” as a legal named party.
@@ -108,12 +114,18 @@ While a job is `running`, the index may include clean records already written un
 
 In-flight with no other gate fail still enter `quarantined` (`job_stopped`). They are not a sixth term. `written` and `updated` are the S6 stayed set only.
 
+**Targeted Query vs Operator item (S10).** The Query-only targeted require (a topic, query, or occasion; refuse copy `Targeted needs a topic, query, or occasion.`) applies only to targeted mode **Query**. It does not apply to targeted mode **Operator item**. Operator item required fields are source, locator, text, kind, and channel. Missing any of those is refused in place with copy `Operator item needs source, locator, text, kind, and channel.` That refuse is not F2. A `written_social` Operator item, or an Operator item whose source is `truth_social` or `x_personal`, is refused in place if no pin is set, with copy `A written_social Operator item is refused if no pin is set.` That refuse is not F2. F2 and A4 remain Query.
+
+**Probe-clock 09:00 tick (S11).** Setting the probe clock to a weekday 09:00 America/New_York instant is the tick: enqueue `incremental` once for each enabled non-exempt source due that day, then advance next-run. Remaining on that frozen instant after the advance does not enqueue again. Setting to a weekday before 09:00 does not enqueue. Saturday and Sunday never enqueue (F47). Display of next-run is not that tick.
+
+**named_party operator surface (S12).** `named_party` is a closed clean field. Clean `legal` requires it equal to `Donald Trump`. `ov-record` shows `named_party` when kind is `legal` (read-only). GetRecord includes `named_party`. Export retrieval set includes `named_party`. Absence of `named_party` on a would-be `legal` item is field-fail, not a silent drop.
+
 
 ### 5.2 Knowledge base
 
 - Successful fetch stores an immutable raw artifact (bytes or text as retrieved) with source identity, locator, retrieval time, and job id. Re-fetch creates a new artifact.
 - A clean record exists only when attribution, the timestamps that channel needs, and text pass the clean gate. Otherwise the item is quarantined.
-- **Clean record fields (closed).** `record_id`, `kind`, `title`, `event_time`, `published_time`, `text`, `text_version`, `text_hash`, `completeness`, `url`, `source`, `occasion`, `audience`, `delivery`, `channel`, `topics`, `people`, `phrases`, `term`, `mention_usable`, `decision_usable`. There is no `confidence` field.
+- **Clean record fields (closed).** `record_id`, `kind`, `title`, `event_time`, `published_time`, `text`, `text_version`, `text_hash`, `completeness`, `url`, `source`, `occasion`, `audience`, `delivery`, `channel`, `topics`, `people`, `phrases`, `term`, `mention_usable`, `decision_usable`, `named_party`. There is no `confidence` field. `named_party` is required on clean `legal` records and is `Donald Trump` on those records. Absence of the field on a would-be `legal` item is field-fail, not a silent drop (S12).
 - **Channel enum (closed):** `spoken` | `written_social` | `written_official` | `legal` | `other`. Books are `other`.
 - Clean `record_id` is stable. Text changes write a new `text_version` and `text_hash`. Prior versions stay resolvable.
 - Spoken and decision records require `event_time`. `written_social` requires `published_time`. Missing the required timestamp → quarantine, or if already clean, clear `mention_usable` / `decision_usable` until the time is present.
@@ -191,18 +203,18 @@ In-flight with no other gate fail still enter `quarantined` (`job_stopped`). The
 | --- | --- |
 | `incremental` | Fetch items new since that source’s last `succeeded` job with fetched > 0 |
 | `backfill` | Fetch items inside an operator-supplied date window, including history |
-| `targeted` | Fetch items matching an operator-supplied topic, query, or occasion |
+| `targeted` | Fetch items matching an operator-supplied topic, query, or occasion (mode Query), or process one operator-supplied item (mode Operator item, S10) |
 | `re_extract` | Re-run extract on stored records (no new source required unless text is missing) |
 | `re_index` | Rebuild the index from stored clean records |
 | `refresh_preferences` | Rebuild derived preferences from current clean records |
 
 - Fate shall not have to run a source outside the app to achieve any of these types.
 - `incremental`, `backfill`, and `targeted` are scoped to one source. `re_index` and `refresh_preferences` are global. `re_extract` may be one source or global.
-- `backfill` requires a date window. `targeted` requires a topic, query, or occasion. The UI refuses to start without them.
+- `backfill` requires a date window. Targeted **Query** requires a topic, query, or occasion. The UI refuses Query without them (copy `Targeted needs a topic, query, or occasion.`). That require does not apply to targeted **Operator item** (S10).
 
 Every job stores: id, type, source (or `global`), params, status, triggered_by (`user` / `schedule` / `retry`), created/started/finished times, counts (fetched, written, updated, unchanged, quarantined), error, log reference, artifact reference.
 
-- Times stored UTC, shown America/New_York.
+- Times stored UTC, shown America/New_York. Operator screens never show a UTC timestamp. Chrome, tables, drawers, and overlays show only America/New_York with label `ET` (CR-QA-9).
 - Counts on a finished job add up. Fate can see where items went.
 
 Statuses: `queued` → `running` → `succeeded` | `succeeded_empty` | `failed` | `cancelled`.
@@ -291,6 +303,40 @@ Counted channels: `spoken`, `written_social` only.
 - Job history is append-only. Retry does not delete the failed job.
 - Delete of clean records: confirm. Delete of the base: typed confirm. No silent path.
 
+### 5.9 Operator controls (CR-QA-1 through CR-QA-11)
+
+These Change Requests are from `/workspace/ptrp-qa-execution.md` section 6. They do not authorize implementation until this Draft is Approved. Each hole has one named product rule. There is no unspecified fork.
+
+**CR-QA-1 Worker-down control.** Chrome next to the worker pill has **Stop worker** while the pill is `available`, and **Start worker** while the pill is `not available`. Stop worker opens confirm `ov-worker-stop` with copy `Stop the worker? Running jobs will fail with worker_lost.` Confirm applies S5 immediately: banner on every screen; stored `running` jobs become stored `failed` with readable error `worker_lost`; display matches stored status; no row is `running`. Start worker sets the worker `available`. The returning worker does not resume `worker_lost` jobs. It executes the next `queued` job, if any. Packet `#mock-worker-toggle` is this Stop / Start control. A switch that only paints `not available` and does not apply S5 is a fail. A SAMPLE `running` row shown after Start worker in the mock is preview only and is not a resumed `worker_lost` job.
+
+**CR-QA-2 Restart method.** Control Sources danger zone has **Restart the app**. Confirm `ov-restart` (not typed) with copy `Restart the app? The knowledge base stays. Running jobs fail with worker_lost.` Confirm applies S5 to any `running` job, then the instance returns with worker `available`, the same knowledge base, the same `record_id` values, and Fate’s enable/disable, topics, occasions, pins, and allowlist as they were. Typed `DELETE` of the base is not a restart. First-boot empty is factory CR-E1, not a restart of an emptied store.
+
+**CR-QA-3 Section-6 down.** Control Operator tab has **Records reads** with values `available` and `down`. Default `available`. While `down`, Search, GetRecord, GetPreference, and ExportRetrievalSet each show an inline error and do not invent records. Copy is `Search cannot run.` `GetRecord cannot run.` `GetPreference cannot run.` `Export cannot run.` While `available`, those four actions run as specified. This is the only operator way to take §6 down.
+
+**CR-QA-4 Load-error induction.** Control Operator tab has **Fail next load** with one choice: Dashboard, Control, Records, or Quarantine, and **Set**. The next open of that screen shows `{Screen} failed to load` plus **Retry**. Data already shown stays until replaced. Retry loads the screen and clears the fail. This is the only operator way to induce F29.
+
+**CR-QA-5 Network, auth, and parse as operator-visible.** Control Sources, each row has **Connector** with values `ok`, `network`, `auth`, and `parse`. Default `ok`. The next fetch job for that source that a worker executes, if Connector is not `ok`, is stored `failed` with readable error exactly `network`, `auth`, or `parse`. S6 applies. There is no silent retry loop. Setting Connector back to `ok` does not resume the failed job. A fetch that returns nothing while Connector is `ok` is `succeeded_empty`.
+
+**CR-QA-6 Off-S7 extract command.** Control Run, when type is `targeted`, has two modes: **Query** and **Operator item**. Query is the existing targeted job (topic, query, occasion; at least one required). Operator item required fields are source, locator, text, kind, and channel. S10: Query’s topic/query/occasion require does not apply to Operator item. Operator item may submit with those three fields empty or hidden. Missing source, locator, text, kind, or channel is refused in place with copy `Operator item needs source, locator, text, kind, and channel.` No job row. That refuse is not F2. Submit of a complete Operator item creates a `targeted` job that processes exactly that one item as a fetch result (`fetched` = 1). Operator item is write-scoped. Same-source mutex applies. If `(kind, channel)` is not in the S7 set for that source, the item is field-fail F33 and is not clean. If `(kind, channel)` is in the S7 set, the ordinary clean gate applies. Fate commands the off-S7 pair by submitting Operator item with source `whitehouse_remarks`, kind `social`, channel `written_social`.
+
+**CR-QA-7 Lookalike and pin-set.** Control Vocabularies: official X pin and official Truth Social pin each have a text field and **Save**. Save of a non-empty value sets that pin. Save of an empty value is F31 (`blocked: empty pin`). Operator item, when source is `truth_social` or `x_personal`, requires **pin match** `match` or `lookalike`. `match` means attribution equals the saved pin. `lookalike` means attribution does not equal the saved pin, and F11 applies: quarantined, not clean. A `written_social` Operator item, or an Operator item whose source is `truth_social` or `x_personal`, is refused in place if no pin is set, with copy `A written_social Operator item is refused if no pin is set.` That refuse is not F2 (S10).
+
+**CR-QA-8 named_party and off-list mint.** Clean `legal` records store `named_party`. Clean legal requires `named_party` equal to `Donald Trump`. Absence of `named_party` on a would-be `legal` item is field-fail, not a silent drop. S12: `ov-record` shows `named_party` when kind is `legal` (read-only). GetRecord includes `named_party`. Export retrieval set includes `named_party` (empty on non-legal rows). Operator item optional fields are `named_party` and `outlet`. `named_party` equal to `the administration` is F27: not ingested as `legal` clean. `outlet` not on the interview allowlist is F12: not clean. Fate adds an allowlist outlet from Vocabularies with text plus **Add**. Fate removes an outlet with **Remove**. Empty allowlist remains `blocked: empty allowlist`.
+
+**CR-QA-9 Stored UTC remainder.** Stored times are UTC. No operator chrome, table, drawer, overlay, or banner shows a UTC timestamp. Every displayed time is America/New_York with label `ET`. Persistence is A16: after Restart the app, the same `record_id` values resolve and the same ET instants display. There is no UTC column for QA to read on a screen.
+
+**CR-QA-10 CR-E2 clock branches.** Control Operator tab has **Probe clock**. Empty means the wall clock in America/New_York. Fate may **Set** a datetime in America/New_York. While set, chrome clock, next-run display, and the scheduler use that instant. **Clear probe clock** returns to the wall clock. Display of next-run is not a scheduler tick. S11: Setting the probe clock to a weekday 09:00 America/New_York instant is the tick: enqueue `incremental` once for each enabled non-exempt source due that day, then advance next-run. Remaining on that frozen instant after the advance does not enqueue again. Setting to a weekday before 09:00 does not enqueue. Saturday and Sunday never enqueue (F47). Fate sets these instants:
+
+- Weekday before 09:00: that source’s next-run is that day’s 09:00. No enqueue.
+- Weekday exactly 09:00: the tick. Enqueue once, then next-run is the next weekday 09:00. Remaining frozen at that 09:00 instant does not enqueue again.
+- Weekday after 09:00, including Friday after 09:00: no enqueue. Next-run is the next weekday 09:00. Friday after 09:00 is Monday 09:00.
+- Monday before 09:00: weekly next-run is this Monday 09:00. No enqueue.
+- Monday exactly 09:00: the tick for weekly sources due that Monday. Enqueue once, then weekly next-run is the following Monday 09:00. Remaining frozen does not enqueue again.
+- Monday after 09:00: no enqueue. Weekly next-run is the following Monday 09:00.
+- Saturday or Sunday: next-run is Monday 09:00. Scheduler does not enqueue on Saturday or Sunday.
+
+**CR-QA-11 Topic row before ingest.** When the topic list is empty, Dashboard table copy is `No topic × channel rows. Add topics in Control → Vocabularies, then ingest.` When Fate Adds a topic, Dashboard immediately shows one row per counted channel (`spoken`, `written_social`) for that topic, usable 0, health `not-ready`, failed clause `zero usable`. Ingest is not required to create those rows. Removing the last topic returns the empty copy.
+
 ---
 
 ## 6. Read actions (stranger-invokable on the instance)
@@ -300,11 +346,11 @@ All four are actions on the **Records** screen. A stranger uses those controls. 
 | Query | How a stranger invokes it | Result |
 | --- | --- | --- |
 | `Search` | Records search box and filters (`channel`, `event_time` window, `published_time` window, `kind`, `topic`, `occasion`, `mention_usable`, `decision_usable`, `source`) | Matching clean rows |
-| `GetRecord` | Open a record row (current version). Pick a prior `text_version` in that drawer for a specific version. | One record at that version |
+| `GetRecord` | Open a record row (current version). Pick a prior `text_version` in that drawer for a specific version. | One record at that version, including `named_party` (S12) |
 | `GetPreference` | Records: choose a topic, Open preference | Current derived preference for that topic (supporting and contradicting record ids, consistency, terms), or empty |
 | `ExportRetrievalSet` | Export retrieval set on the current search result | Retrieval list of the current rows |
 
-Each record returned: `record_id`, `text_version`, `text_hash`, `channel`, `event_time`, `published_time`, `completeness`, `mention_usable`, `decision_usable`, `kind`, `source`, `text`. No `confidence`.
+Each record returned: `record_id`, `text_version`, `text_hash`, `channel`, `event_time`, `published_time`, `completeness`, `mention_usable`, `decision_usable`, `kind`, `source`, `text`, `named_party`. No `confidence`. S12 wins over any leftover omit of `named_party`.
 
 If a read action cannot run (control down or data unavailable): that control shows an inline error. The app does not invent records. This Spec does not specify any out-of-app failure.
 
@@ -321,7 +367,7 @@ Dashboard, without opening a job:
 - R-UI-3. Job snapshot: queued, running, failed (last 24 hours plus any older unacknowledged failure).
 - R-UI-4. Topics below the thin bar, including “no `2025_present` usable rows,” shown as `not-ready` with the failed clause. Raw clean count is not this bar. No venue.
 - R-UI-5. Quarantine count.
-- R-UI-6. Worker availability.
+- R-UI-6. Worker availability. Stop worker and Start worker (CR-QA-1).
 
 Control:
 
@@ -329,14 +375,17 @@ Control:
 - R-UI-8. List jobs filtered by status, source, type, date.
 - R-UI-9. Open a job: params, **stored** status, live or completed log, counts (stayed clean vs `quarantined`/`job_stopped` when S6 applied; equation shown), error, artifact links.
 - R-UI-10. Cancel, retry, enable source, disable source.
-- R-UI-11. Confirm before manual run of a disabled source, before global `re_index` or `refresh_preferences`, and before any delete of clean records or of the base.
+- R-UI-11. Confirm before manual run of a disabled source, before global `re_index` or `refresh_preferences`, before Stop worker, before Restart the app, and before any delete of clean records or of the base.
 - R-UI-12. Next scheduled run per enabled source.
-- R-UI-18. Edit topic vocabulary, occasion vocabulary, interview allowlist, official X pin, official Truth Social pin.
+- R-UI-18. Edit topic vocabulary, occasion vocabulary, interview allowlist (Add / Remove), official X pin (Save), official Truth Social pin (Save).
+- R-UI-20. Control Operator tab: Records reads, Fail next load, Probe clock (CR-QA-3, CR-QA-4, CR-QA-10).
+- R-UI-21. Control Sources Connector `ok` / `network` / `auth` / `parse` (CR-QA-5).
+- R-UI-22. Control Run targeted Operator item (CR-QA-6, CR-QA-7, CR-QA-8).
 
 Records:
 
 - R-UI-13. Search and filter clean records by kind, source, date, topic, channel, occasion, term (this is `Search`).
-- R-UI-14. Opening a record shows current text, prior text versions, extract, source, artifact, producing job, `event_time`, `published_time`, completeness, mention-usable, decision-usable. Picking a prior version is `GetRecord`. Export a retrieval set matching §6.
+- R-UI-14. Opening a record shows current text, prior text versions, extract, source, artifact, producing job, `event_time`, `published_time`, completeness, mention-usable, decision-usable, and `named_party` when kind is `legal` (S12). Picking a prior version is `GetRecord`. Export a retrieval set matching §6, including `named_party`.
 - R-UI-15. Fate shall not edit a clean record in place. Correction: fix source config or re-ingest / re-extract.
 - R-UI-19. Choose a topic and Open preference (`GetPreference`). Shows supporting and contradicting record ids, consistency, terms, or empty. Not a fifth chrome screen.
 
@@ -355,7 +404,13 @@ Screen layout, controls, copy, overlays, and empty/error states are in §8 excep
 
 **Interaction spec (mandatory, pulled in).** The following is UI/UX Ninja’s packet, now a section of this Spec — not a parallel product.
 
-**§5–§7 win on conflict, including:** no `written_other`; books are `other`; write mutex includes global `re_extract` against every source; thin is not-ready; no venue; no `confidence`; empty official pins are `blocked: empty pin`; worker-down stored status is `failed` / `worker_lost` (packet A8 display-as-queued is struck); `GetPreference` is Open preference on Records; no out-of-app `no_call`; S6 stay-committed; S7 pair table; S8 covering set and cadence/exempt (packet “no default” for `campaign`/`interviews` is struck; those have cadence); S9 in-flight always `quarantined`/`job_stopped` (no never-committed bucket); CR-E1 all eleven factory `enabled`; CR-E2 clock 09:00 ET.
+**§5–§7 win on conflict, including:** no `written_other`; books are `other`; write mutex includes global `re_extract` against every source; thin is not-ready; no venue; no `confidence`; empty official pins are `blocked: empty pin`; worker-down stored status is `failed` / `worker_lost` (packet A8 display-as-queued is struck); `GetPreference` is Open preference on Records; no out-of-app `no_call`; S6 stay-committed; S7 pair table; S8 covering set and cadence/exempt (packet “no default” for `campaign`/`interviews` is struck; those have cadence); S9 in-flight always `quarantined`/`job_stopped` (no never-committed bucket); CR-E1 all eleven factory `enabled`; CR-E2 clock 09:00 ET; CR-QA-1 through CR-QA-11; S10 Query-only targeted require; S11 probe-clock 09:00 tick; S12 `named_party` on `ov-record`, GetRecord, and Export.
+
+**v6 Ninja pull.** Mock ids: `#worker-stop` `#worker-start` `ov-worker-stop` `#btn-restart` `ov-restart` `#tab-operator` `#records-reads` `#records-down-err` `#fail-next-load` `#fail-next-load-set` `#load-error` `#probe-clock` `#probe-clock-set` `#probe-clock-clear` `#connector-{source}` `#pin-x-save` `#pin-ts-save` `#allowlist-add` `#targeted-mode` `#named-party-page` `#pin-match-page` `#thin-body`. Four chrome screens only. Operator is a Control tab, not a fifth chrome screen.
+
+**v7 Ninja pull.** S12: `ov-record` shows read-only `named_party` when kind is `legal` (`#rec-named-party`); hidden otherwise. SAMPLE `rec_lg_0001` shows `Donald Trump`. GetRecord is that drawer. Export SAMPLE includes `named_party` on every record; legal SAMPLE is `Donald Trump`; other SAMPLE rows may be JSON `null` for empty. Quarantine SAMPLE `q_106` is field-fail `missing named_party (legal)`, not a silent drop. S10 refuse copies in the mock stay Query-only vs Operator item as named.
+
+**Mock SAMPLE is not product.** Start worker does not restore a `running` job. Operator item is write-scoped; same-source mutex applies. A mock skip of `ov-dup` on Operator item is not product.
 
 **Changelog:** struck written_other; books are other.
 
@@ -398,9 +453,10 @@ Present on every screen.
 | --- | --- |
 | Product name | `PTRP`. Not a link to a public site. |
 | Worker availability | Pill: `available` or `not available`. Bound to R-UI-6 / R-APP-4. |
+| Stop worker / Start worker | `#worker-stop` while `available`. `#worker-start` while `not available`. Stop opens `ov-worker-stop`. CR-QA-1. |
 | Quarantine badge | Integer count of open quarantined items. Click → `screen-quarantine`. Split is on Dashboard and Quarantine, not in the badge. R-UI-5. |
 | Nav | Four items above. Active item marked. |
-| Clock | Current time in ET, labeled `ET`. No timezone control. |
+| Clock | Current time in ET, labeled `ET`. Probe clock, when set, is this clock. No timezone control. CR-QA-9, CR-QA-10. |
 
 **Not in chrome:** user switcher, role picker, second-base switcher, venue picker, “place a call”, account menu.
 
@@ -409,7 +465,7 @@ Present on every screen.
 When worker is **not available**:
 
 - Banner, full width under chrome, copy: `Worker not available. New jobs sit queued. Nothing is executing.`
-- No job row, snapshot, or detail may show status `running`. If a job was `running` when the worker dropped, the UI shows it as `queued` (R-JOB-6 / R-APP-4) with helper `Worker not available — not executing.`
+- No job row, snapshot, or detail may show status `running`. Stop worker applies S5: stored `failed` / `worker_lost`. Display matches stored status. Packet copy that showed a dropped `running` job as `queued` remains struck.
 - Run still creates a job in `queued` (does not block enqueue for worker-down). Same-source write mutex (R-JOB-9) still applies (queue behind or reject, Fate chooses).
 - Cancel remains available for `queued`.
 
@@ -418,7 +474,7 @@ When worker is **not available**:
 | State | Behavior |
 | --- | --- |
 | Loading | Screen body skeleton; chrome stays. No fake `running` jobs. |
-| Load error | Inline error + Retry. Data already on screen stays until replaced. |
+| Load error | Inline error `{Screen} failed to load` + Retry. Data already on screen stays until replaced. Induced only by Fail next load (CR-QA-4). |
 | Empty | Per-screen empty copy below. Never a marketing illustration. |
 
 ---
@@ -560,7 +616,7 @@ Do not collapse two channels into one topic row.
 
 Filter: topic search; health (`all` / `not-ready` / `ready`); channel.
 
-Empty: `No topic × channel rows. Add topics in Control → Vocabularies, then ingest.`
+Empty: `No topic × channel rows. Add topics in Control → Vocabularies, then ingest.` That copy is only when the topic list is empty. After Add topic, one row per counted channel appears immediately with usable 0, health `not-ready`, failed clause `zero usable` (CR-QA-11). Ingest is not required to create the rows.
 
 ### 4.6 Dashboard states
 
@@ -591,9 +647,9 @@ None. Ack is not a confirm.
 
 **Purpose:** Do work / inspect work.
 
-**R-UI covered:** R-UI-7, R-UI-8, R-UI-9, R-UI-10, R-UI-11, R-UI-12, R-UI-18. R-JOB-9, R-JOB-6, R-JOB-13, R-SRC-1, R-SRC-2, R-SCH-5.
+**R-UI covered:** R-UI-7, R-UI-8, R-UI-9, R-UI-10, R-UI-11, R-UI-12, R-UI-18, R-UI-20, R-UI-21, R-UI-22. R-JOB-9, R-JOB-6, R-JOB-13, R-SRC-1, R-SRC-2, R-SCH-5.
 
-Inner tabs: `Run job` | `Jobs` | `Sources` | `Vocabularies`.
+Inner tabs: `Run job` | `Jobs` | `Sources` | `Vocabularies` | `Operator`.
 
 ### 5.1 Tab: Run job (R-UI-7)
 
@@ -606,10 +662,15 @@ Primary start surface. Overlay `ov-run` is this same form when opened from anoth
 | Type | always | yes: `incremental` `backfill` `targeted` `re_extract` `re_index` `refresh_preferences` |
 | Source | incremental, backfill, targeted: required, single source. re_extract: source **or** `global`. re_index / refresh_preferences: hidden; value is `global`. | as left |
 | Date window start / end | `backfill` | both, start ≤ end, ET dates |
-| Topic | `targeted` | at least one of topic, query, occasion |
-| Query | `targeted` | ″ |
-| Occasion | `targeted` | ″ |
-| Force re-fetch | incremental, backfill, targeted only (fetch jobs). Label: `Force re-fetch — pull new raw artifacts; may write a new text_version (R-JOB-13)`. Default off. | no |
+| Targeted mode | `targeted` | Query or Operator item. Default Query. CR-QA-6. |
+| Topic | `targeted` Query | at least one of topic, query, occasion |
+| Query | `targeted` Query | ″ |
+| Occasion | `targeted` Query | ″ |
+| Locator, text, kind, channel | `targeted` Operator item | all four plus source |
+| named_party | `targeted` Operator item | no. Required path for F27. |
+| outlet | `targeted` Operator item | no. Required path for F12. |
+| pin match | `targeted` Operator item when source is `truth_social` or `x_personal` | `match` or `lookalike` |
+| Force re-fetch | incremental, backfill, targeted Query only (fetch jobs). Label: `Force re-fetch — pull new raw artifacts; may write a new text_version (R-JOB-13)`. Default off. Hidden on Operator item. | no |
 | Submit | `Run` | — |
 
 Topic and occasion controls are **selects from operator vocabularies**, not free-text invent (R-EX-4). Query is free text (locator / phrase / URL search passed to the connector).
@@ -618,7 +679,9 @@ Topic and occasion controls are **selects from operator vocabularies**, not free
 
 - Missing source on incremental/backfill/targeted: `Source is required.`
 - Backfill missing window: `Backfill needs a date window.`
-- Targeted with topic, query, and occasion all empty: `Targeted needs a topic, query, or occasion.`
+- Targeted **Query** with topic, query, and occasion all empty: `Targeted needs a topic, query, or occasion.` Does not apply to Operator item (S10).
+- Targeted **Operator item** missing source, locator, text, kind, or channel: `Operator item needs source, locator, text, kind, and channel.` Not F2.
+- Targeted **Operator item** `written_social`, or source `truth_social` / `x_personal`, with no pin set: `A written_social Operator item is refused if no pin is set.` Not F2.
 - re_extract with neither source nor global: `Pick a source or global.`
 - Window start > end: `Start must be on or before end.`
 
@@ -735,7 +798,7 @@ Default cadence is §5.6. Default clock is CR-E2 (09:00 ET). Exempt `books` / `l
 
 This tab does not include a cron builder. Cadence display is read-only in v0 UI (assumption A1).
 
-Danger zone at bottom of Sources (or a footer on Control): `Delete clean records…` (confirm, not typed) and `Delete the base…` → `ov-delete`.
+Danger zone at bottom of Sources (or a footer on Control): `Restart the app` → `ov-restart` (CR-QA-2); `Delete clean records…` (confirm, not typed); `Delete the base…` → `ov-delete`.
 
 ### 5.5 Tab: Vocabularies (R-UI-18, R-SRC-7)
 
@@ -753,16 +816,30 @@ Approved R-UI-18 is topic vocabulary, occasion vocabulary, and official X / Trut
 
 **Interview-outlet allowlist** (R-SRC-7)
 
-- Default **empty**. Empty → `interviews` source shows `blocked: empty allowlist`. Add/remove outlet names as Fate uses them (domain or outlet slug).
+- Default **empty**. Empty → `interviews` source shows `blocked: empty allowlist`. Add (`#allowlist-add`, text + Add). Remove (`#allowlist-remove` per row). Domain or outlet slug.
 - Helper: `Empty allowlist blocks the interviews source. Empty jobs do not make it fresh.`
 
 **Official account pins** (R-UI-18, R-SRC-9)
 
-- Official X account pin: single value, edit + save.
-- Official Truth Social account pin: single value, edit + save.
+- Official X account pin: single value, text field + **Save** (`#pin-x-save`). Empty Save is F31.
+- Official Truth Social account pin: single value, text field + **Save** (`#pin-ts-save`). Empty Save is F31.
 - Helper: `Clean written_social attribution must match these pins. A lookalike is quarantined.`
 
 No “add topic from this record” on Records. No people vocabulary editor in v0 UI (assumption A2: people are extracted, not a closed vocab in R-UI-18).
+
+### 5.5b Tab: Operator (CR-QA-3, CR-QA-4, CR-QA-10)
+
+Fifth Control tab. Not a fifth chrome screen.
+
+| Control | Behavior |
+| --- | --- |
+| Records reads | `available` (default) or `down`. `#records-reads`. CR-QA-3. |
+| Fail next load | Choice Dashboard, Control, Records, Quarantine + **Set**. `#fail-next-load`. CR-QA-4. |
+| Probe clock | Datetime America/New_York + **Set**. **Clear probe clock** when set. `#probe-clock`. CR-QA-10. |
+
+Sources tab Connector is on each source row (`#connector-{source}`): `ok` (default), `network`, `auth`, `parse` (CR-QA-5).
+
+Run tab, type `targeted`: mode **Query** or **Operator item** (`#targeted-mode`). Operator item fields: source, locator, text, kind, channel; optional `named_party`, `outlet`; pin match `match` or `lookalike` when source is `truth_social` or `x_personal`.
 
 ### 5.6 Control states
 
@@ -772,6 +849,9 @@ No “add topic from this record” on Records. No people vocabulary editor in v
 | Worker down | Banner. Run still allowed (queues). Jobs list cannot show `running`. |
 | Same-source mutex | `ov-dup` confirm (Queue behind / Don't start). Reject-only toast when already running + queued-behind. Form-inline reason. |
 | Empty jobs | Filter empty copy. |
+| Records reads down | Records screen §6 controls each show the CR-QA-3 cannot-run copy. |
+| Fail next load armed | Next open of the chosen screen is F29 until Retry. |
+| Probe clock set | Chrome clock and next-run use that ET instant. |
 
 ### 5.7 NOT on Control
 
@@ -828,7 +908,9 @@ Exports the **current search results** (after filters), as a file/list. This is 
 
 Each exported record includes exactly:
 
-`record_id`, `text_version`, `text_hash`, `channel`, `event_time`, `published_time`, `completeness`, `mention_usable`, `decision_usable`, `kind`, `source`, `text`
+`record_id`, `text_version`, `text_hash`, `channel`, `event_time`, `published_time`, `completeness`, `mention_usable`, `decision_usable`, `kind`, `source`, `text`, `named_party`
+
+`named_party` is `Donald Trump` on kind `legal`. It is empty on other kinds. SAMPLE Export may use JSON `null` for empty. The file does not omit the field (S12).
 
 Times in the file may be UTC (storage) with an ET companion or ISO-8601 UTC; the UI still displays ET. Assumption A3: file uses UTC ISO-8601 plus the ET display string is not required in the file.
 
@@ -847,6 +929,7 @@ Drawer. **Text is read-only.** No `contenteditable`, no `Save text`, no pencil o
 | Version switcher | Each `text_version` listed (vN … v1). Selecting a version shows that text, hash, and timestamp. Each version is resolvable. Current version marked. |
 | Extract | topics, people, phrases, pledges, occasion — tags only from operator vocab. No add-tag invent. |
 | Decision extras | If kind=decision: `act_type`, `direction`, `status`, linked remarks. |
+| Legal extras (S12) | If kind=`legal`: `named_party`, read-only. Clean legal shows `Donald Trump`. |
 | Times | `event_time` ET, `published_time` ET. Missing shown as `—` (should not happen on clean; if mention/decision usable is false, still show). |
 | Completeness | `full_transcript` / `excerpt` / `paraphrase` |
 | Provenance (R-AUD-1) | artifact link, producing job (opens `ov-job`), source, fetch time ET |
@@ -967,6 +1050,8 @@ Always include the R-UI-17 sentence in a persistent helper under the filter, eve
 | `ov-record` | Drawer | Records row; job detail clean-record links |
 | `ov-q-fieldfail` | Drawer state | Quarantine field-fail row |
 | `ov-q-hold` | Drawer state | Quarantine operator-hold row |
+| `ov-worker-stop` | Confirm | Chrome Stop worker (CR-QA-1) |
+| `ov-restart` | Confirm | Sources danger Restart the app (CR-QA-2) |
 
 `ov-refresh` is required by R-UI-11 even though the review list named eight overlays; the eight named plus this confirm are all in the mock.
 
@@ -1124,19 +1209,22 @@ Assumption A4: typed DELETE removes clean records (and derived preferences). Raw
 | R-UI-3 | Dashboard | Queued / running / failed counts; failed list; Ack | `#job-snapshot` `#ack-failed` |
 | R-UI-4 | Dashboard | Topic × counted channel table; usable count; failed clause; raw clean labeled NOT the bar; health ready/not-ready | `#thin-table` |
 | R-UI-5 | Dashboard + chrome | Quarantine total split field-fail / operator-hold; click → Quarantine | `#q-badge` `#q-split` |
-| R-UI-6 | Chrome + every screen | Worker pill; worker-down banner; mock toggle | `#worker-pill` `#worker-banner` `#mock-worker-toggle` |
+| R-UI-6 | Chrome + every screen | Worker pill; Stop worker; Start worker; worker-down banner | `#worker-pill` `#worker-stop` `#worker-start` `#worker-banner` |
 | R-UI-7 | Control → Run job | Type, params, Run, inline validation | `ov-run` `#tab-run` |
 | R-UI-8 | Control → Jobs | Filters status/source/type/date; list | `#tab-jobs` |
 | R-UI-9 | Job detail | Params, status, log, counts that add up, error, artifacts, clean links, quarantine links | `ov-job` |
 | R-UI-10 | Jobs / Sources | Cancel, Retry, enable, disable | `#tab-jobs` `#tab-sources` |
-| R-UI-11 | Confirms | Disabled-source run; global re_index; global refresh_preferences; delete records; typed DELETE base | `ov-disabled` `ov-reindex` `ov-refresh` `ov-delete` |
+| R-UI-11 | Confirms | Disabled-source run; global re_index; global refresh_preferences; Stop worker; Restart the app; delete records; typed DELETE base | `ov-disabled` `ov-reindex` `ov-refresh` `ov-worker-stop` `ov-restart` `ov-delete` |
 | R-UI-12 | Control → Sources | Next scheduled run; disabled = not scheduled | `#tab-sources` `#next-run` |
 | R-UI-13 | Records | Kind, source, date, topic, channel, occasion, term, search, mention-usable, decision-usable | `#records-filters` |
-| R-UI-14 | Records + drawer | Read-only text, version switcher, extract, provenance, usable flags, Export retrieval set | `ov-record` `#btn-export` |
+| R-UI-14 | Records + drawer | Read-only text, version switcher, extract, provenance, usable flags, `named_party` on legal, Export retrieval set | `ov-record` `#btn-export` `#rec-named-party` |
 | R-UI-15 | Record drawer | Open source config; Start re_extract; Start re-ingest. No text edit | `ov-record` `#record-correct` |
 | R-UI-16 | Quarantine | Reason filter; named rule; Accept disabled on field-fail; Accept enabled on operator-hold; no field editor | `ov-q-fieldfail` `ov-q-hold` `#q-reason` |
 | R-UI-17 | Quarantine | Discard + persistent helper copy | `#q-discard-helper` |
-| R-UI-18 | Control → Vocabularies | Topics, occasions, official X pin, official Truth Social pin. Interview allowlist on this tab is R-SRC-7 | `#tab-vocabs` |
+| R-UI-18 | Control → Vocabularies | Topics, occasions, official X pin Save, official Truth Social pin Save. Interview allowlist Add / Remove | `#tab-vocabs` `#pin-x-save` `#pin-ts-save` `#allowlist-add` |
+| R-UI-20 | Control → Operator | Records reads; Fail next load; Probe clock | `#tab-operator` `#records-reads` `#records-down-err` `#fail-next-load` `#fail-next-load-set` `#load-error` `#probe-clock` `#probe-clock-set` `#probe-clock-clear` |
+| R-UI-21 | Control → Sources | Connector per source | `#connector-{source}` `#btn-restart` |
+| R-UI-22 | Control → Run | Targeted Operator item | `#targeted-mode` `#named-party-page` `#pin-match-page` |
 
 ---
 
@@ -1197,6 +1285,13 @@ Used to demonstrate: 24h stale on Friday successes, cadence not yet stale for da
 - Stopped-job helper: `written + updated = stayed clean. quarantined includes job_stopped. fetched = written + updated + unchanged + quarantined + fetch_fail.`
 - job_stopped accept helper: `Cannot accept. A later job for this locator may write clean if it then passes the gate. That later clean write is not also an open job_stopped item.`
 - Correction helper: `Clean text is not editable. Fix source config or re-ingest / re-extract.`
+- Stop worker: `Stop the worker? Running jobs will fail with worker_lost.`
+- Start worker: `Start worker`
+- Restart the app: `Restart the app? The knowledge base stays. Running jobs fail with worker_lost.`
+- Records reads down: `Search cannot run.` `GetRecord cannot run.` `GetPreference cannot run.` `Export cannot run.`
+- Load error: `{Screen} failed to load` plus Retry.
+- Topic row before ingest failed clause: `zero usable`
+- Connector values: `ok` `network` `auth` `parse`
 
 
 ---
@@ -1210,7 +1305,7 @@ Each case is specified behavior. A missing case is a hole.
 | ID | Case | Required result |
 | --- | --- | --- |
 | F1 | Worker not available | Banner on every screen. Stored `running` jobs become stored `failed` with `worker_lost`. Display matches. New Run creates `queued`. No stored or shown `running`. S6 applies: stayed clean remain, in-flight not clean, index equals stayed set. Mutex released. Returning worker does not resume; it runs the next `queued` job. |
-| F2 | Incremental/backfill/targeted missing required params | Run refused in place. No job row. |
+| F2 | Incremental or backfill missing required params, or targeted **Query** with topic, query, and occasion all empty | Run refused in place. No job row. Copy for Query: `Targeted needs a topic, query, or occasion.` Does not apply to Operator item (S10). |
 | F3 | Second write-scoped job for a source that already has one `queued` or `running`, including when the occupant is global `re_extract` / `re_index` / `refresh_preferences` | Fate chooses queue-behind or don’t-start. Visible reason. Incremental and backfill cannot write that source at once. |
 | F4 | Third write-scoped job while one running and one queued-behind for that source (including a waiting global job) | Rejected only. No third job. |
 | F5 | Job `failed`, `cancelled`, or `worker_lost` | S6 only: stayed clean under that job id remain. In-flight not clean. Index equals stayed set. No further writes from that job id. Earlier succeeded jobs’ records stay. |
@@ -1246,6 +1341,21 @@ Each case is specified behavior. A missing case is a hole.
 | F35 | In-flight item with no other gate fail when the job stops | Field-fail `job_stopped`. Counts as `quarantined`. Accept disabled. Not a silent drop. |
 | F36 | First boot of an empty instance | All eleven sources `enabled`. No wizard. Blocked reasons still show. Restart after Fate disables a source does not re-enable it. |
 | F37 | `books` or `legal` next scheduled run, or a disabled source | Copy is `not scheduled`. Scheduler does not enqueue them. |
+| F38 | Fate chooses Stop worker while a job is `running` | `ov-worker-stop`. Confirm applies S5. Pill `not available`. Banner. Stored `failed` / `worker_lost`. No `running` row. |
+| F39 | Fate chooses Start worker | Pill `available`. Banner gone. `worker_lost` jobs are not resumed. Next `queued` job may run. |
+| F40 | Fate chooses Restart the app | `ov-restart`. Confirm applies S5, then instance returns with same `record_id` values and same enable/disable, topics, pins, and allowlist. Worker `available`. Typed DELETE is not this path. |
+| F41 | Records reads is `down` | Each §6 control shows its cannot-run copy. No invented records. |
+| F42 | Fail next load is set for a screen, then Fate opens that screen | `{Screen} failed to load` plus Retry. Retry loads and clears the fail. |
+| F43 | Connector is `network`, `auth`, or `parse` on a source, then a worker executes a fetch job for that source | Job stored `failed` with that exact readable error. S6. No silent retry loop. |
+| F44 | Operator item `(kind, channel)` is not in the S7 set for that source | Field-fail F33. Not clean. `fetched` = 1. |
+| F45 | Operator item pin match `lookalike` on `truth_social` or `x_personal` with a set pin | F11. Quarantined, not clean. |
+| F46 | Operator item `named_party` is `the administration` | F27. Not ingested as `legal` clean. |
+| F47 | Probe clock is Saturday or Sunday | Next-run Monday 09:00 ET. Scheduler does not enqueue. |
+| F48 | Fate Adds a topic while the counted-channel table is empty of rows | One `spoken` row and one `written_social` row appear immediately, usable 0, `not-ready`, failed clause `zero usable`. Ingest is not required. |
+| F49 | Targeted Operator item missing source, locator, text, kind, or channel | Refused in place. Copy `Operator item needs source, locator, text, kind, and channel.` No job row. Not F2 (S10). |
+| F50 | Targeted Operator item `written_social`, or source `truth_social` / `x_personal`, with no pin set | Refused in place. Copy `A written_social Operator item is refused if no pin is set.` No job row. Not F2 (S10). |
+| F51 | Probe clock Set to a weekday 09:00 ET instant | Tick: enqueue `incremental` once for each enabled non-exempt source due that day, then advance next-run. Remaining frozen on that instant does not enqueue again (S11). |
+| F52 | Would-be `legal` item with `named_party` absent | Field-fail. Not clean. Not a silent drop. Operator can read `named_party` on clean legal via `ov-record`, GetRecord, and Export (S12). |
 
 ---
 
@@ -1258,14 +1368,14 @@ A stranger, given the production instance and this Spec, can do each of these. P
 | A1 | Open Dashboard with no job running | Sees clean totals by kind, newest clean time, source health, job snapshot, quarantine count, worker pill, topic × counted channel table (`ready` / `not-ready` only). |
 | A2 | Start a valid `incremental` job for an enabled source | Job appears. Status moves `queued` → `running` → a terminal status when a worker executes it. |
 | A3 | Open that job | Sees params, stored status, log, counts that add up (`fetched = written + updated + unchanged + quarantined + fetch_fail`), error or `—`, links to artifacts / clean writes / quarantine from that job. On stop, in-flight is in `quarantined`. |
-| A4 | Start `backfill` with no window, or `targeted` with topic/query/occasion all empty | Refused. No job created. |
+| A4 | Start `backfill` with no window, or targeted **Query** with topic/query/occasion all empty | Refused. No job created. Does not apply to Operator item (S10). |
 | A5 | While a write-scoped job is `running` for `truth_social`, start another write-scoped job for `truth_social` | Overlay offers queue-behind or don’t-start. Choosing don’t-start creates no job. Choosing queue-behind creates `queued` that does not run until the first leaves `queued`/`running`. |
 | A5b | While any source write job is `running`, start global `re_extract` | Same overlay. Queue-behind waits until every touched source is free. Don’t-start creates no job. |
 | A6 | Cancel a `queued` or `running` job | Terminal `cancelled`. S6: stayed clean remain, in-flight not clean, index equals stayed set. |
 | A7 | Retry a `failed` job | New job id, same params, pointer to the failed job. Failed job remains in history. |
 | A8 | Disable a source, wait for schedule tick (or inspect next-run) | Next run is `not scheduled`. Manual Run still possible after confirm. |
-| A9 | Browse a clean record | Current text, prior versions if any, extract, source, artifact, job, both timestamps, completeness, mention-usable, decision-usable. No edit field for text. No confidence field. |
-| A10 | Export a retrieval set from current Records search | File or payload contains §6 fields for each row. |
+| A9 | Browse a clean record | Current text, prior versions if any, extract, source, artifact, job, both timestamps, completeness, mention-usable, decision-usable, and `named_party` when kind is `legal`. No edit field for text. No confidence field. |
+| A10 | Export a retrieval set from current Records search | File or payload contains §6 fields for each row, including `named_party` (S12). |
 | A11 | Open Quarantine | Field-fail and operator-hold are distinguishable. Accept on field-fail is disabled. Accept on passing operator-hold promotes without editing fields. Discard holds F10. |
 | A12 | Worker down during a `running` job that already wrote some clean records | Banner. Stored `failed` / `worker_lost`. S6: those clean records stay and remain in the index. In-flight not clean. No `running` rows. Returning worker does not resume. Retry is a new id. |
 | A13 | Empty interview allowlist | `interviews` shows `blocked: empty allowlist`. A job that fetches 0 does not mark it fresh. |
@@ -1280,6 +1390,20 @@ A stranger, given the production instance and this Spec, can do each of these. P
 | A22 | Cancel or fail a running fetch after some items fetched but not yet clean | Those items appear in Quarantine as `job_stopped`. `quarantined` in the job equation equals that set plus any other gate-fails. No leftover. |
 | A23 | First boot empty instance, Control Sources | Eleven rows, each `enabled`. `interviews` still `blocked: empty allowlist`. Empty social pins still `blocked: empty pin`. No wizard screen. |
 | A24 | Weekday at or after 09:00 ET, enabled daily source | `next scheduled run` is the next weekday 09:00 ET. Enabled weekly source: next Monday 09:00 ET (this Monday if before 09:00 Monday; else the following Monday). `books` is `not scheduled`. |
+| A25 | Stop worker during a `running` job that already wrote some clean records | Same pass as A12, induced by Stop worker. |
+| A26 | Restart the app after a clean `record_id` exists | Same `record_id` resolves. Enable/disable and pins persist. Worker returns `available`. |
+| A27 | Set Records reads to `down`, then use Search | Copy `Search cannot run.` No invented records. Set `available`, Search runs. |
+| A28 | Set Fail next load to Dashboard, open Dashboard | Copy `Dashboard failed to load` plus Retry. Retry loads Dashboard. |
+| A29 | Set Connector `auth` on `books`, Run incremental `books`, worker available | Job `failed`, error `auth`. S6. |
+| A30 | Operator item source `whitehouse_remarks`, kind `social`, channel `written_social` | Field-fail. Not clean. |
+| A31 | Save a non-empty official X pin, then Operator item `x_personal` pin match `lookalike` | Quarantined, not clean. Source is not `blocked: empty pin`. |
+| A32 | Operator item source `legal`, `named_party` `the administration` | Not ingested as `legal` clean. |
+| A33 | Displayed job created time after Restart the app | Same ET instant as before restart. No UTC string on the screen. |
+| A34 | Probe clock Set Monday 08:00 ET, then Set Monday 09:00 ET, leave frozen, then Set Monday 10:00 ET | Monday 08:00: weekly next-run this Monday 09:00, no enqueue. Set Monday 09:00: the tick, enqueue once, next-run the following Monday 09:00. Remaining frozen at Monday 09:00: no second enqueue. Set Monday 10:00: no enqueue (S11). |
+| A35 | Add topic `tariffs` with no ingest | Dashboard shows `tariffs` × `spoken` and `tariffs` × `written_social`, usable 0, `not-ready`, `zero usable`. |
+| A36 | Targeted Operator item with topic, query, and occasion empty, and source, locator, text, kind, and channel filled | Job is created. Query copy `Targeted needs a topic, query, or occasion.` is not shown (S10). |
+| A37 | Targeted Operator item missing locator | Refused. Copy `Operator item needs source, locator, text, kind, and channel.` No job. Not A4. |
+| A38 | Open a clean `legal` record | `ov-record` shows `named_party` `Donald Trump`. GetRecord includes `named_party`. Export of that row includes `named_party` `Donald Trump` (S12). |
 
 A1, A2, A3, A9, A11, A15, A16 are the stranger done-when. The rest are required for this Spec to be complete.
 
@@ -1300,6 +1424,10 @@ Fate can:
 9. Tell whether a (topic × counted channel) is `ready` or `not-ready`.
 10. Open a preference for a topic on Records.
 11. See `blocked: empty pin` when an official social pin is empty.
+12. Stop and Start the worker.
+13. Restart the app.
+14. Set Records reads down, Fail next load, Connector, Probe clock, and run a targeted Operator item.
+15. Save pins, Add allowlist outlets, and Add a topic and see Dashboard rows before ingest.
 
 Fate cannot, and shall not be offered UI that pretends otherwise:
 
@@ -1313,8 +1441,9 @@ Fate cannot, and shall not be offered UI that pretends otherwise:
 
 ## 12. Supersessions
 
-- This file is the only consumable Spec.
+- This file is the only consumable Spec. Frozen snapshot is `/workspace/ptrp-spec-approved-v7.md`. Frozen v5 is history.
 - The Accepted Goal supersedes “requirements only / no build.”
-- UI/UX Ninja’s standalone packet is absorbed into §8. Do not review that file as a separate product. Packet A8 (show running as queued) is struck by §5.1. S6 stay-committed, S7 pair table, S8 covering/cadence, S9 `job_stopped`, CR-E1 factory enabled, and CR-E2 09:00 ET override any conflicting §8 copy.
+- UI/UX Ninja’s standalone packet is absorbed into §8. Do not review that file as a separate product. Packet A8 (show running as queued) is struck by §5.1. S6 stay-committed, S7 pair table, S8 covering/cadence, S9 `job_stopped`, CR-E1 factory enabled, CR-E2 09:00 ET, and CR-QA-1 through CR-QA-11 override any conflicting §8 copy. Packet `#mock-worker-toggle` is Stop worker / Start worker (CR-QA-1). S10, S11, and S12 override any conflicting Query-only targeted require, probe-clock enqueue fork, or omitted `named_party` surface.
+- Engineer and QA consume this file.
 - Historical pipeline and system-spec files are not imported.
 - H-patch notes are not part of this Spec.
