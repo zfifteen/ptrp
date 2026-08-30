@@ -2,13 +2,13 @@
 
 **Artifact:** Spec  
 **State:** Approved  
-**Version:** v7  
+**Version:** v8  
 **Date:** 2026-08-30  
 **Owner:** Specification Writer  
-**Verdict:** `/workspace/ptrp-spec-draft-review-v7.md` (APPROVED). Frozen snapshot `/workspace/ptrp-spec-approved-v7.md`. Frozen v5 at `/workspace/ptrp-spec-approved-v5.md` is history. Engineer and QA consume this file. S1–S12, CR-E1, CR-E2, and CR-QA-1 through CR-QA-11 are closed. Do not open v8.  
-**UI/UX:** pulled from UI/UX Ninja into §8 and `/workspace/ptrp-ui-mockups/index.html` (README `/workspace/ptrp-ui-mockups/README.md`).  
-**Consumable Spec:** this file. Historical pipeline and v0-spec files are not imported.  
-**Advisory A1:** a leftover §6 “Each record returned” list without `named_party` is struck. S12 wins. The list below includes `named_party`. Do not implement the stale omit.  
+**Prior:** Approved Spec v7 at `/workspace/ptrp-spec-approved-v7.md`. This Draft names CR-USER-1 (`/workspace/ptrp-cr-user-1.md`). S1–S12, CR-E1 (no wizard, enable independent of blocked, persistence), CR-E2, and CR-QA-1 through CR-QA-11 remain closed. Empty first-boot observation is out of scope. Do not add a wipe.  
+**UI/UX:** unchanged from v7. No screen change. Ninja was not pulled.  
+**Consumable Spec:** this file. Snapshot `/workspace/ptrp-spec-approved-v8.md`. Frozen v7 is history. Historical pipeline and v0-spec files are not imported.  
+**Advisory A1:** leftover §6 omit of `named_party` remains struck. S12 wins.  
 **Advisory A2:** packet leftover “Global jobs are not this mutex” remains struck by §5.5 / A5b. Do not reopen S2.
 
 This Spec does not name a language, framework, database, host, or vendor.
@@ -42,6 +42,7 @@ This Spec does not name a language, framework, database, host, or vendor.
 - Operator worker Stop and Start (CR-QA-1). Operator Restart the app (CR-QA-2). Operator Records-reads down (CR-QA-3). Operator Fail next load (CR-QA-4). Per-source Connector `ok` / `network` / `auth` / `parse` (CR-QA-5). Targeted Operator item (CR-QA-6, CR-QA-7, CR-QA-8). Probe clock (CR-QA-10). Topic rows appear when a topic is added, before ingest (CR-QA-11).
 - Clean legal field `named_party`. Clean legal requires `named_party` equal to `Donald Trump`. Operator surfaces for that field: `ov-record` (kind `legal`), GetRecord, and Export (S12).
 - Targeted mode Query vs Operator item (S10). Probe-clock weekday 09:00 tick (S11).
+- CR-USER-1: empty first-boot observation is not a go-live requirement. No operator wipe.
 
 ## 2. Out of scope
 
@@ -58,6 +59,8 @@ This Spec does not name a language, framework, database, host, or vendor.
 - `remark_count` / `decision_value` product surfaces.
 - “The administration” as a legal named party.
 - Language, framework, host, database, vendor.
+- Observing first boot of an empty instance (v7 A23, CR-E1 factory-empty half, F36 factory-empty half). That observation is not a go-live requirement.
+- An operator wipe, or any control that returns a used instance to empty first boot.
 
 ## 3. Non-goals
 
@@ -66,6 +69,7 @@ This Spec does not name a language, framework, database, host, or vendor.
 - Filling idle time with extra screens.
 - A cron builder in v0 UI (cadence display is read-only).
 - A people-vocabulary editor in v0 UI.
+- Obtaining or inventing an empty first boot in order to go live.
 
 ---
 
@@ -168,7 +172,7 @@ In-flight with no other gate fail still enter `quarantined` (`job_stopped`). The
 
 - Fate enables or disables each source from Control. A disabled source is not enqueued by the scheduler. Fate may still run it manually, with confirm.
 
-**Factory `enabled` (CR-E1).** On first boot of an empty instance, all eleven sources are `enabled`. There is no first-run wizard. `enabled` is independent of `blocked`: `interviews` still shows `blocked: empty allowlist`; `x_personal` and `truth_social` still show `blocked: empty pin` while those pins are empty. Fate’s later disable/enable is what persists across restarts. Factory is not reapplied on restart of a non-empty instance.
+**Factory `enabled` (CR-E1, CR-USER-1).** Observing first boot of an empty instance is out of scope and is not a go-live requirement. There is no operator wipe and no control that returns a used instance to empty first boot. On the current instance there is no first-run wizard. `enabled` is independent of `blocked`: `interviews` still shows `blocked: empty allowlist` when the allowlist is empty; `x_personal` and `truth_social` still show `blocked: empty pin` while those pins are empty. A blocked reason does not force `disabled`. Fate’s disable/enable persists across Restart the app. Factory is not reapplied on restart of a non-empty instance. Quality shall not obtain or invent an empty first boot.
 
 **Legal `(kind, channel)` per source (S7, closed).** A write whose pair is not in this set is field-fail, not clean. No other pairs.
 
@@ -309,7 +313,7 @@ These Change Requests are from `/workspace/ptrp-qa-execution.md` section 6. They
 
 **CR-QA-1 Worker-down control.** Chrome next to the worker pill has **Stop worker** while the pill is `available`, and **Start worker** while the pill is `not available`. Stop worker opens confirm `ov-worker-stop` with copy `Stop the worker? Running jobs will fail with worker_lost.` Confirm applies S5 immediately: banner on every screen; stored `running` jobs become stored `failed` with readable error `worker_lost`; display matches stored status; no row is `running`. Start worker sets the worker `available`. The returning worker does not resume `worker_lost` jobs. It executes the next `queued` job, if any. Packet `#mock-worker-toggle` is this Stop / Start control. A switch that only paints `not available` and does not apply S5 is a fail. A SAMPLE `running` row shown after Start worker in the mock is preview only and is not a resumed `worker_lost` job.
 
-**CR-QA-2 Restart method.** Control Sources danger zone has **Restart the app**. Confirm `ov-restart` (not typed) with copy `Restart the app? The knowledge base stays. Running jobs fail with worker_lost.` Confirm applies S5 to any `running` job, then the instance returns with worker `available`, the same knowledge base, the same `record_id` values, and Fate’s enable/disable, topics, occasions, pins, and allowlist as they were. Typed `DELETE` of the base is not a restart. First-boot empty is factory CR-E1, not a restart of an emptied store.
+**CR-QA-2 Restart method.** Control Sources danger zone has **Restart the app**. Confirm `ov-restart` (not typed) with copy `Restart the app? The knowledge base stays. Running jobs fail with worker_lost.` Confirm applies S5 to any `running` job, then the instance returns with worker `available`, the same knowledge base, the same `record_id` values, and Fate’s enable/disable, topics, occasions, pins, and allowlist as they were. Typed `DELETE` of the base is not a restart. Restart the app is not a wipe. There is no operator control that returns a used instance to empty first boot. Empty first-boot observation is out of scope (CR-USER-1).
 
 **CR-QA-3 Section-6 down.** Control Operator tab has **Records reads** with values `available` and `down`. Default `available`. While `down`, Search, GetRecord, GetPreference, and ExportRetrievalSet each show an inline error and do not invent records. Copy is `Search cannot run.` `GetRecord cannot run.` `GetPreference cannot run.` `Export cannot run.` While `available`, those four actions run as specified. This is the only operator way to take §6 down.
 
@@ -336,6 +340,8 @@ These Change Requests are from `/workspace/ptrp-qa-execution.md` section 6. They
 - Saturday or Sunday: next-run is Monday 09:00. Scheduler does not enqueue on Saturday or Sunday.
 
 **CR-QA-11 Topic row before ingest.** When the topic list is empty, Dashboard table copy is `No topic × channel rows. Add topics in Control → Vocabularies, then ingest.` When Fate Adds a topic, Dashboard immediately shows one row per counted channel (`spoken`, `written_social`) for that topic, usable 0, health `not-ready`, failed clause `zero usable`. Ingest is not required to create those rows. Removing the last topic returns the empty copy.
+
+**CR-USER-1 Empty first-boot observation.** Observing first boot of an empty instance is out of scope and is not a go-live requirement. v7 A23, the CR-E1 factory-empty half (all eleven sources `enabled` on empty first boot), and the F36 factory-empty half are struck as go-live checks. There is no operator wipe and no control that returns a used instance to empty first boot. Remaining CR-E1 rules stay: no first-run wizard on the current instance; `enabled` is independent of `blocked`; Fate’s disable/enable persists across Restart the app; factory is not reapplied on restart of a non-empty instance. Quality shall not obtain or invent an empty first boot.
 
 ---
 
@@ -404,7 +410,7 @@ Screen layout, controls, copy, overlays, and empty/error states are in §8 excep
 
 **Interaction spec (mandatory, pulled in).** The following is UI/UX Ninja’s packet, now a section of this Spec — not a parallel product.
 
-**§5–§7 win on conflict, including:** no `written_other`; books are `other`; write mutex includes global `re_extract` against every source; thin is not-ready; no venue; no `confidence`; empty official pins are `blocked: empty pin`; worker-down stored status is `failed` / `worker_lost` (packet A8 display-as-queued is struck); `GetPreference` is Open preference on Records; no out-of-app `no_call`; S6 stay-committed; S7 pair table; S8 covering set and cadence/exempt (packet “no default” for `campaign`/`interviews` is struck; those have cadence); S9 in-flight always `quarantined`/`job_stopped` (no never-committed bucket); CR-E1 all eleven factory `enabled`; CR-E2 clock 09:00 ET; CR-QA-1 through CR-QA-11; S10 Query-only targeted require; S11 probe-clock 09:00 tick; S12 `named_party` on `ov-record`, GetRecord, and Export.
+**§5–§7 win on conflict, including:** no `written_other`; books are `other`; write mutex includes global `re_extract` against every source; thin is not-ready; no venue; no `confidence`; empty official pins are `blocked: empty pin`; worker-down stored status is `failed` / `worker_lost` (packet A8 display-as-queued is struck); `GetPreference` is Open preference on Records; no out-of-app `no_call`; S6 stay-committed; S7 pair table; S8 covering set and cadence/exempt (packet “no default” for `campaign`/`interviews` is struck; those have cadence); S9 in-flight always `quarantined`/`job_stopped` (no never-committed bucket); CR-E1 no wizard / enable independent of blocked / persistence (empty first-boot observation out of scope, CR-USER-1); CR-E2 clock 09:00 ET; CR-QA-1 through CR-QA-11; S10 Query-only targeted require; S11 probe-clock 09:00 tick; S12 `named_party` on `ov-record`, GetRecord, and Export.
 
 **v6 Ninja pull.** Mock ids: `#worker-stop` `#worker-start` `ov-worker-stop` `#btn-restart` `ov-restart` `#tab-operator` `#records-reads` `#records-down-err` `#fail-next-load` `#fail-next-load-set` `#load-error` `#probe-clock` `#probe-clock-set` `#probe-clock-clear` `#connector-{source}` `#pin-x-save` `#pin-ts-save` `#allowlist-add` `#targeted-mode` `#named-party-page` `#pin-match-page` `#thin-body`. Four chrome screens only. Operator is a Control tab, not a fifth chrome screen.
 
@@ -1339,7 +1345,7 @@ Each case is specified behavior. A missing case is a hole.
 | F33 | Write whose `(kind, channel)` is not in the S7 set for that source | Field-fail. Not clean. |
 | F34 | `books` or `legal` cadence-stale for not-ready | They never participate. `spoken` not-ready-from-stale uses only the S8 spoken covering set. |
 | F35 | In-flight item with no other gate fail when the job stops | Field-fail `job_stopped`. Counts as `quarantined`. Accept disabled. Not a silent drop. |
-| F36 | First boot of an empty instance | All eleven sources `enabled`. No wizard. Blocked reasons still show. Restart after Fate disables a source does not re-enable it. |
+| F36 | Restart the app after Fate disables a source | That source stays `disabled`. Factory is not reapplied. No wizard. A blocked reason does not force `disabled`. Empty first boot is not this case. |
 | F37 | `books` or `legal` next scheduled run, or a disabled source | Copy is `not scheduled`. Scheduler does not enqueue them. |
 | F38 | Fate chooses Stop worker while a job is `running` | `ov-worker-stop`. Confirm applies S5. Pill `not available`. Banner. Stored `failed` / `worker_lost`. No `running` row. |
 | F39 | Fate chooses Start worker | Pill `available`. Banner gone. `worker_lost` jobs are not resumed. Next `queued` job may run. |
@@ -1356,6 +1362,7 @@ Each case is specified behavior. A missing case is a hole.
 | F50 | Targeted Operator item `written_social`, or source `truth_social` / `x_personal`, with no pin set | Refused in place. Copy `A written_social Operator item is refused if no pin is set.` No job row. Not F2 (S10). |
 | F51 | Probe clock Set to a weekday 09:00 ET instant | Tick: enqueue `incremental` once for each enabled non-exempt source due that day, then advance next-run. Remaining frozen on that instant does not enqueue again (S11). |
 | F52 | Would-be `legal` item with `named_party` absent | Field-fail. Not clean. Not a silent drop. Operator can read `named_party` on clean legal via `ov-record`, GetRecord, and Export (S12). |
+| F53 | Operator wipe or return-to-empty-first-boot control | Absent on every screen. Restart the app is not a wipe. Typed DELETE of the base is not a go-live path to factory-empty first boot (CR-USER-1). |
 
 ---
 
@@ -1388,7 +1395,7 @@ A stranger, given the production instance and this Spec, can do each of these. P
 | A20 | Dashboard spoken not-ready from stale | Uses only `whitehouse_remarks`, `app`, `factbase`, `campaign`, `interviews`. `books` / `legal` / `whitehouse_actions` / `federal_register` do not decide it. |
 | A21 | `books` source health | Shows last success if any. No cadence-stale clock. Exempt. |
 | A22 | Cancel or fail a running fetch after some items fetched but not yet clean | Those items appear in Quarantine as `job_stopped`. `quarantined` in the job equation equals that set plus any other gate-fails. No leftover. |
-| A23 | First boot empty instance, Control Sources | Eleven rows, each `enabled`. `interviews` still `blocked: empty allowlist`. Empty social pins still `blocked: empty pin`. No wizard screen. |
+| A23 | Current instance, Control Sources | No first-run wizard. A blocked reason does not force `disabled`. `interviews` may be `enabled` and still `blocked: empty allowlist` when the allowlist is empty. Empty social pins still show `blocked: empty pin` without forcing `disabled`. This test does not require an empty first boot and does not require all eleven sources `enabled`. |
 | A24 | Weekday at or after 09:00 ET, enabled daily source | `next scheduled run` is the next weekday 09:00 ET. Enabled weekly source: next Monday 09:00 ET (this Monday if before 09:00 Monday; else the following Monday). `books` is `not scheduled`. |
 | A25 | Stop worker during a `running` job that already wrote some clean records | Same pass as A12, induced by Stop worker. |
 | A26 | Restart the app after a clean `record_id` exists | Same `record_id` resolves. Enable/disable and pins persist. Worker returns `available`. |
@@ -1404,6 +1411,7 @@ A stranger, given the production instance and this Spec, can do each of these. P
 | A36 | Targeted Operator item with topic, query, and occasion empty, and source, locator, text, kind, and channel filled | Job is created. Query copy `Targeted needs a topic, query, or occasion.` is not shown (S10). |
 | A37 | Targeted Operator item missing locator | Refused. Copy `Operator item needs source, locator, text, kind, and channel.` No job. Not A4. |
 | A38 | Open a clean `legal` record | `ov-record` shows `named_party` `Donald Trump`. GetRecord includes `named_party`. Export of that row includes `named_party` `Donald Trump` (S12). |
+| A39 | Walk all four screens and Control Sources danger zone | Restart the app is present. No wipe control. No return-to-empty-first-boot control. Restart the app is not a wipe (CR-USER-1). |
 
 A1, A2, A3, A9, A11, A15, A16 are the stranger done-when. The rest are required for this Spec to be complete.
 
@@ -1436,14 +1444,15 @@ Fate cannot, and shall not be offered UI that pretends otherwise:
 - Delete the base without an explicit typed confirm
 - Ask the pipeline to pick a market side
 - Set or view a confidence field
+- Wipe the instance to empty first boot, or be required to observe empty first boot in order to go live
 
 ---
 
 ## 12. Supersessions
 
-- This file is the only consumable Spec. Frozen snapshot is `/workspace/ptrp-spec-approved-v7.md`. Frozen v5 is history.
+- Until this Draft is Approved, `/workspace/ptrp-spec-approved-v7.md` is the only consumable Spec. After Approval, this file is the only consumable Spec.
 - The Accepted Goal supersedes “requirements only / no build.”
-- UI/UX Ninja’s standalone packet is absorbed into §8. Do not review that file as a separate product. Packet A8 (show running as queued) is struck by §5.1. S6 stay-committed, S7 pair table, S8 covering/cadence, S9 `job_stopped`, CR-E1 factory enabled, CR-E2 09:00 ET, and CR-QA-1 through CR-QA-11 override any conflicting §8 copy. Packet `#mock-worker-toggle` is Stop worker / Start worker (CR-QA-1). S10, S11, and S12 override any conflicting Query-only targeted require, probe-clock enqueue fork, or omitted `named_party` surface.
-- Engineer and QA consume this file.
+- UI/UX Ninja’s standalone packet is absorbed into §8. Do not review that file as a separate product. Packet A8 (show running as queued) is struck by §5.1. S6 stay-committed, S7 pair table, S8 covering/cadence, S9 `job_stopped`, CR-E1 (no wizard, enable independent of blocked, persistence), CR-E2 09:00 ET, CR-QA-1 through CR-QA-11, and CR-USER-1 override any conflicting §8 copy. Packet `#mock-worker-toggle` is Stop worker / Start worker (CR-QA-1). S10, S11, and S12 override any conflicting Query-only targeted require, probe-clock enqueue fork, or omitted `named_party` surface. CR-USER-1 strikes empty first-boot observation as a go-live check.
+- Until this Draft is Approved, Engineer and QA consume `/workspace/ptrp-spec-approved-v7.md`.
 - Historical pipeline and system-spec files are not imported.
 - H-patch notes are not part of this Spec.
