@@ -359,6 +359,13 @@ class Engine:
         return out
 
     def _save_job(self, j):
+        existing = self._job_row(j["id"]) if j.get("id") else None
+        if existing and existing["status"] in ("failed", "cancelled"):
+            if j.get("status") in ("running", "succeeded", "succeeded_empty", "queued"):
+                j = dict(j)
+                j["status"] = existing["status"]
+                j["error"] = existing.get("error")
+                j["finished"] = existing.get("finished")
         params = j.get("params") if isinstance(j.get("params"), str) else json.dumps(j.get("params") or {})
         log = j.get("log") if isinstance(j.get("log"), str) else json.dumps(j.get("log") or [])
         inflight = j.get("in_flight") if isinstance(j.get("in_flight"), str) else json.dumps(j.get("in_flight") or [])
@@ -852,6 +859,57 @@ class Engine:
             "term": params.get("term"),
         }
 
+    def _locator_is_clean(self, locator):
+        if not locator:
+            return False
+        r = self.conn.execute("SELECT 1 FROM records WHERE record_id=?", (locator,)).fetchone()
+        return bool(r)
+
+    def _worker_down_or_job_not_running(self, job_id):
+        if not self.worker_available:
+            return True
+        row = self._job_row(job_id)
+        return not row or row["status"] != "running"
+
+    def _s6_quarantine_remaining(self, j, remaining):
+        already = {
+            r["locator"]
+            for r in self.conn.execute(
+                "SELECT locator FROM quarantine WHERE job_id=? AND failed_rule='job_stopped' AND open=1",
+                (j["id"],),
+            ).fetchall()
+        }
+        for it in remaining or []:
+            if not isinstance(it, dict):
+                continue
+            if it.get("fetch_failed"):
+                j["fetch_fail"] = j.get("fetch_fail", 0) + 1
+                continue
+            loc = it.get("locator")
+            if loc and (loc in already or self._locator_is_clean(loc)):
+                continue
+            self._quarantine(j, it, "field-fail", "job_stopped")
+            j["quarantined"] = j.get("quarantined", 0) + 1
+            if loc:
+                already.add(loc)
+
+    def _abort_stopped_work(self, job_id, remaining, fetched=None):
+        if not self._worker_down_or_job_not_running(job_id):
+            return False
+        latest = self.get_job(job_id)
+        if fetched is not None:
+            latest["fetched"] = fetched
+        self._s6_quarantine_remaining(latest, remaining)
+        latest["in_flight"] = []
+        if latest["status"] == "running":
+            latest["status"] = "failed"
+            latest["error"] = "worker_lost"
+            latest["finished"] = _iso(self.now())
+            latest["log"] = (latest.get("log") or []) + ["failed worker_lost"]
+        self._in_flight.pop(job_id, None)
+        self._save_job(latest)
+        return True
+
     def _work(self, job_id, stay_running=False):
         j = self.get_job(job_id)
         if j["status"] != "running":
@@ -883,6 +941,8 @@ class Engine:
             try:
                 raw_items = self.fetch.fetch(source, jtype, params)
             except Exception as exc:
+                if self._abort_stopped_work(job_id, []):
+                    return
                 msg = getattr(exc, "message", None) or str(exc)
                 self._stop_job(job_id, status="failed", error=msg)
                 if source in SOURCES:
@@ -891,6 +951,10 @@ class Engine:
                 return
 
         items = [self._item_to_dict(x) for x in (raw_items or [])]
+        self._in_flight[job_id] = list(items)
+        if self._abort_stopped_work(job_id, items, fetched=len(items)):
+            return
+        j = self.get_job(job_id)
         j["fetched"] = len(items)
         force = bool(params.get("force_refetch"))
         j["in_flight"] = items
@@ -907,23 +971,46 @@ class Engine:
         remaining = []
         process_cap = self.interrupt_after if stay_running else None
         stop_after_clean = None if stay_running else self.cancel_after_clean
+        todo = list(items)
 
-        for it in items:
+        while todo:
+            self._in_flight[job_id] = list(todo)
+            j["in_flight"] = list(todo)
+            self._save_job(j)
+            if self._abort_stopped_work(job_id, todo, fetched=len(items)):
+                return
+            it = todo[0]
             if it.get("fetch_failed"):
                 j["fetch_fail"] = j.get("fetch_fail", 0) + 1
+                todo.pop(0)
                 continue
             written_clean = j.get("written", 0) + j.get("updated", 0)
             if process_cap is not None and written_clean >= process_cap:
-                remaining.append(it)
-                continue
+                remaining.extend(todo)
+                break
             if stop_after_clean is not None and written_clean >= stop_after_clean:
-                remaining.append(it)
-                continue
+                remaining.extend(todo)
+                break
+            todo.pop(0)
+            self._in_flight[job_id] = [it] + list(todo)
             self._store_artifact(j, it)
             self._process_item(j, it, force)
+            leftover = []
+            if self._worker_down_or_job_not_running(job_id):
+                if not self._locator_is_clean(it.get("locator")):
+                    leftover.append(it)
+                leftover.extend(todo)
+                if self._abort_stopped_work(job_id, leftover, fetched=len(items)):
+                    return
+            self._in_flight[job_id] = list(todo)
+            j["in_flight"] = list(todo)
+            self._save_job(j)
 
         j["in_flight"] = remaining
+        self._in_flight[job_id] = list(remaining)
         self._save_job(j)
+        if self._abort_stopped_work(job_id, remaining, fetched=len(items)):
+            return
 
         if stay_running:
             return
@@ -951,6 +1038,20 @@ class Engine:
             self.conn.commit()
 
     def _finish(self, j, status, error=None):
+        latest = self._job_row(j["id"]) if j.get("id") else None
+        if latest and latest["status"] in ("failed", "cancelled") and status in (
+            "succeeded",
+            "succeeded_empty",
+            "running",
+        ):
+            keep = dict(j)
+            keep["status"] = latest["status"]
+            keep["error"] = latest.get("error")
+            keep["finished"] = latest.get("finished")
+            keep["in_flight"] = []
+            self._save_job(keep)
+            self._in_flight.pop(j["id"], None)
+            return
         if status == "running":
             j["status"] = "running"
             self._save_job(j)
@@ -963,21 +1064,22 @@ class Engine:
             j["error"] = None
         j["in_flight"] = []
         self._save_job(j)
+        self._in_flight.pop(j.get("id"), None)
 
     def _stop_job(self, job_id, status, error):
         j = self.get_job(job_id)
-        inflight = j.get("in_flight") or []
+        inflight = self._in_flight.get(job_id)
+        if inflight is None:
+            inflight = j.get("in_flight") or []
         if isinstance(inflight, str):
             inflight = json.loads(inflight or "[]")
-        for it in inflight:
-            if isinstance(it, dict):
-                self._quarantine(j, it, "field-fail", "job_stopped")
-                j["quarantined"] = j.get("quarantined", 0) + 1
+        self._s6_quarantine_remaining(j, inflight)
         j["status"] = status
         j["error"] = error
         j["finished"] = _iso(self.now())
         j["in_flight"] = []
         j["log"] = (j.get("log") or []) + [f"{status} {error or ''}"]
+        self._in_flight.pop(job_id, None)
         self._save_job(j)
 
     def _store_artifact(self, j, it):
@@ -1001,6 +1103,8 @@ class Engine:
         return bool(r)
 
     def _process_item(self, j, it, force):
+        if self._worker_down_or_job_not_running(j["id"]):
+            return
         source = j["source"]
         locator = it["locator"]
         chash = _sha(it.get("text") or "")
@@ -1033,6 +1137,7 @@ class Engine:
             (source, locator),
         )
         self.conn.commit()
+        self._save_job(j)
 
     def _record_from_item(self, it, source, job_id, record_id):
         channel = it["channel"]
