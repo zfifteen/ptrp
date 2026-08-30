@@ -871,6 +871,15 @@ class Engine:
         r = self.conn.execute("SELECT 1 FROM records WHERE record_id=?", (locator,)).fetchone()
         return bool(r)
 
+    def _locator_written_clean_by_job(self, locator, job_id):
+        if not locator or not job_id:
+            return False
+        r = self.conn.execute(
+            "SELECT 1 FROM records WHERE record_id=? AND job_id=?",
+            (locator, job_id),
+        ).fetchone()
+        return bool(r)
+
     def _worker_down_or_job_not_running(self, job_id):
         if not self.worker_available:
             return True
@@ -892,7 +901,7 @@ class Engine:
                 j["fetch_fail"] = j.get("fetch_fail", 0) + 1
                 continue
             loc = it.get("locator")
-            if loc and (loc in already or self._locator_is_clean(loc)):
+            if loc and (loc in already or self._locator_written_clean_by_job(loc, j["id"])):
                 continue
             self._quarantine(j, it, "field-fail", "job_stopped")
             j["quarantined"] = j.get("quarantined", 0) + 1
@@ -1003,7 +1012,7 @@ class Engine:
             self._process_item(j, it, force)
             leftover = []
             if self._worker_down_or_job_not_running(job_id):
-                if not self._locator_is_clean(it.get("locator")):
+                if not self._locator_written_clean_by_job(it.get("locator"), job_id):
                     leftover.append(it)
                 leftover.extend(todo)
                 if self._abort_stopped_work(job_id, leftover, fetched=len(items)):
