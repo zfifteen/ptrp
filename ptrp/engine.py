@@ -1,4 +1,4 @@
-"""PTRP domain engine. Product behavior from Approved Spec v5 only."""
+"""PTRP domain engine. Product behavior from Approved Spec v7."""
 
 from __future__ import annotations
 
@@ -150,6 +150,8 @@ class Engine:
         self.fail_before_clean = False
         self.load_error = None
         self.read_down = False
+        self.probe_clock = None
+        self.connectors = {s: "ok" for s in SOURCES}
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -157,7 +159,10 @@ class Engine:
         self._in_flight = {}
 
     def now(self):
-        n = self.clock()
+        if self.probe_clock is not None:
+            n = self.probe_clock
+        else:
+            n = self.clock()
         if n.tzinfo is None:
             n = n.replace(tzinfo=timezone.utc)
         return n.astimezone(timezone.utc)
@@ -236,7 +241,8 @@ class Engine:
                 direction TEXT,
                 decision_status TEXT,
                 related TEXT,
-                created_at TEXT
+                created_at TEXT,
+                named_party TEXT
             );
             CREATE TABLE IF NOT EXISTS record_versions (
                 record_id TEXT,
@@ -280,6 +286,9 @@ class Engine:
                 c.execute("INSERT INTO sources (id, enabled) VALUES (?, 1)", (s,))
             c.execute("INSERT OR IGNORE INTO pins (k, v) VALUES ('x_personal', '')")
             c.execute("INSERT OR IGNORE INTO pins (k, v) VALUES ('truth_social', '')")
+        cols = [r[1] for r in c.execute("PRAGMA table_info(records)")]
+        if "named_party" not in cols:
+            c.execute("ALTER TABLE records ADD COLUMN named_party TEXT")
         c.commit()
 
     def _job_row(self, job_id):
@@ -415,13 +424,73 @@ class Engine:
         now_et = self.now().astimezone(ET)
         return next_weekday_0900(now_et, weekly=(cad == "weekly"))
 
+    def _meta_get(self, k, default=None):
+        r = self.conn.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
+        return r["v"] if r else default
+
+    def _meta_set(self, k, v):
+        self.conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)", (k, v))
+        self.conn.commit()
+
+    def set_connector(self, source, value):
+        if value not in ("ok", "network", "auth", "parse"):
+            value = "ok"
+        self.connectors[source] = value
+
+    def get_connector(self, source):
+        return self.connectors.get(source, "ok")
+
+    def set_records_reads(self, value):
+        self.read_down = str(value).strip().lower() == "down"
+
+    def set_fail_next_load(self, screen):
+        name = str(screen or "").strip()
+        key = name.lower()
+        if key in ("dashboard", "control", "records", "quarantine"):
+            self.load_error = key
+
+    def clear_load_error(self):
+        self.load_error = None
+
+    def set_probe_clock(self, value):
+        if value is None or value == "":
+            self.probe_clock = None
+            return
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            s = str(value).strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ET)
+        else:
+            dt = dt.astimezone(ET)
+        self.probe_clock = dt
+        self.scheduler_tick()
+
+    def clear_probe_clock(self):
+        self.probe_clock = None
+
     def scheduler_tick(self):
-        now = self.now()
+        now_et = self.now().astimezone(ET)
+        if now_et.weekday() >= 5:
+            return
+        if now_et.hour != CLOCK_HOUR or now_et.minute != CLOCK_MINUTE:
+            return
+        tick_key = now_et.strftime("%Y-%m-%dT09:00")
+        if self._meta_get("last_schedule_tick") == tick_key:
+            return
+        is_monday = now_et.weekday() == 0
         for source in SOURCES:
-            nxt = self.next_scheduled_run(source)
-            if nxt == COPY["not_scheduled"]:
+            cad = CADENCE.get(source)
+            if cad is None:
                 continue
-            if now.astimezone(ET) < nxt.astimezone(ET):
+            st = self.conn.execute("SELECT enabled FROM sources WHERE id=?", (source,)).fetchone()
+            if not st or not st["enabled"]:
+                continue
+            if cad == "weekly" and not is_monday:
                 continue
             occupants = self._occupants_for(self._touched("incremental", source))
             if occupants:
@@ -430,6 +499,7 @@ class Engine:
                 type="incremental", source=source, triggered_by="schedule",
                 confirm_disabled=True,
             )
+        self._meta_set("last_schedule_tick", tick_key)
 
     def _touched(self, job_type, source):
         if job_type in GLOBAL_TYPES or source == "global":
@@ -486,7 +556,25 @@ class Engine:
         if job_type == "re_extract" and source is None:
             return Result(ok=False, message=COPY["pick_source"])
 
-        if job_type in FETCH_TYPES:
+        targeted_mode = str(params.get("targeted_mode") or "query").strip() or "query"
+        if job_type == "targeted" and targeted_mode == "operator_item":
+            loc = str(params.get("locator") or "").strip()
+            text = str(params.get("text") or "").strip()
+            kind = str(params.get("kind") or "").strip()
+            channel = str(params.get("channel") or "").strip()
+            if not source or not loc or not text or not kind or not channel:
+                return Result(ok=False, message=COPY["operator_item_need"])
+            if source not in SOURCES:
+                return Result(ok=False, message=f"Source is not on the configured list: {source}")
+            needs_pin = (channel == "written_social") or (source in ("truth_social", "x_personal"))
+            if needs_pin:
+                if source in ("truth_social", "x_personal"):
+                    pin = self.get_pin(source)
+                else:
+                    pin = self.get_pin("x_personal") or self.get_pin("truth_social")
+                if not pin:
+                    return Result(ok=False, message=COPY["operator_item_pin"])
+        elif job_type in FETCH_TYPES:
             if not source:
                 return Result(ok=False, message=COPY["src_required"])
             if source not in SOURCES:
@@ -501,7 +589,7 @@ class Engine:
                 return Result(ok=False, message=COPY["backfill_window"])
             if str(ws) > str(we):
                 return Result(ok=False, message=COPY["start_end"])
-        if job_type == "targeted":
+        if job_type == "targeted" and targeted_mode != "operator_item":
             if not (params.get("topic") or params.get("query") or params.get("occasion")):
                 return Result(ok=False, message=COPY["targeted_need"])
 
@@ -601,6 +689,21 @@ class Engine:
             for r in rows:
                 self._stop_job(r["id"], status="failed", error="worker_lost")
 
+    def stop_worker(self, confirm=False):
+        if not confirm:
+            return Result(ok=False, overlay="ov-worker-stop", message=COPY["stop_worker"])
+        self.set_worker_available(False)
+        return Result(ok=True)
+
+    def start_worker(self):
+        self.set_worker_available(True)
+        self.drain()
+        return Result(ok=True)
+
+    def apply_restart_s5(self):
+        self.set_worker_available(False)
+        self.worker_available = True
+
     def cancel(self, job_id, confirmed=True):
         j = self.get_job(job_id)
         if j["status"] not in ("queued", "running"):
@@ -679,6 +782,47 @@ class Engine:
             "fetch_error": g("fetch_error"),
         }
 
+    def _operator_item_from_params(self, source, params):
+        pin_match = str(params.get("pin_match") or "match").strip() or "match"
+        handle = params.get("author_handle")
+        if source in ("truth_social", "x_personal"):
+            pin = self.get_pin(source)
+            if pin_match == "lookalike":
+                handle = handle or ((pin + "Fan") if pin else "lookalike")
+                if pin and handle.lower().lstrip("@") == pin.lower().lstrip("@"):
+                    handle = pin + "Fan"
+            else:
+                handle = handle or pin
+        topics = params.get("topics") or []
+        if isinstance(topics, str):
+            topics = [x for x in topics.split(",") if x.strip()]
+        return {
+            "locator": params.get("locator"),
+            "text": params.get("text") or "",
+            "kind": params.get("kind"),
+            "channel": params.get("channel"),
+            "title": params.get("title") or "",
+            "event_time": params.get("event_time"),
+            "published_time": params.get("published_time"),
+            "url": params.get("url") or "",
+            "attributed": True if params.get("attributed") is None else bool(params.get("attributed")),
+            "completeness": params.get("completeness") or "full_transcript",
+            "outlet": params.get("outlet"),
+            "author_handle": handle,
+            "named_party": params.get("named_party"),
+            "topics": topics,
+            "occasion": params.get("item_occasion") or None,
+            "act_type": params.get("act_type"),
+            "direction": params.get("direction"),
+            "status": params.get("status"),
+            "related_remarks": list(params.get("related_remarks") or []),
+            "people": list(params.get("people") or []),
+            "phrases": list(params.get("phrases") or []),
+            "audience": params.get("audience"),
+            "delivery": params.get("delivery"),
+            "term": params.get("term"),
+        }
+
     def _work(self, job_id, stay_running=False):
         j = self.get_job(job_id)
         if j["status"] != "running":
@@ -696,15 +840,26 @@ class Engine:
         if jtype == "re_extract":
             self._finish(j, "succeeded")
             return
-        try:
-            raw_items = self.fetch.fetch(source, jtype, params)
-        except Exception as exc:
-            msg = getattr(exc, "message", None) or str(exc)
-            self._stop_job(job_id, status="failed", error=msg)
-            if source in SOURCES:
-                self.conn.execute("UPDATE sources SET last_error=? WHERE id=?", (msg, source))
+        if jtype in FETCH_TYPES and source in SOURCES:
+            conn_err = self.get_connector(source)
+            if conn_err != "ok":
+                self._stop_job(job_id, status="failed", error=conn_err)
+                self.conn.execute("UPDATE sources SET last_error=? WHERE id=?", (conn_err, source))
                 self.conn.commit()
-            return
+                return
+
+        if jtype == "targeted" and str((params or {}).get("targeted_mode") or "") == "operator_item":
+            raw_items = [self._operator_item_from_params(source, params)]
+        else:
+            try:
+                raw_items = self.fetch.fetch(source, jtype, params)
+            except Exception as exc:
+                msg = getattr(exc, "message", None) or str(exc)
+                self._stop_job(job_id, status="failed", error=msg)
+                if source in SOURCES:
+                    self.conn.execute("UPDATE sources SET last_error=? WHERE id=?", (msg, source))
+                    self.conn.commit()
+                return
 
         items = [self._item_to_dict(x) for x in (raw_items or [])]
         j["fetched"] = len(items)
@@ -889,6 +1044,7 @@ class Engine:
             "decision_status": it.get("status"),
             "related": json.dumps(it.get("related_remarks") or []),
             "created_at": _iso(self.now()),
+            "named_party": (it.get("named_party") or "") if (kind == "legal") else (it.get("named_party") or ""),
         }
 
     def _upsert_record(self, rec):
@@ -896,8 +1052,8 @@ class Engine:
             """INSERT OR REPLACE INTO records
             (record_id,locator,kind,title,event_time,published_time,text,text_version,text_hash,
              completeness,url,source,occasion,audience,delivery,channel,topics,people,phrases,term,
-             mention_usable,decision_usable,job_id,act_type,direction,decision_status,related,created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             mention_usable,decision_usable,job_id,act_type,direction,decision_status,related,created_at,named_party)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rec["record_id"], rec["locator"], rec["kind"], rec["title"], rec["event_time"],
                 rec["published_time"], rec["text"], rec["text_version"], rec["text_hash"],
@@ -905,6 +1061,7 @@ class Engine:
                 rec["delivery"], rec["channel"], rec["topics"], rec["people"], rec["phrases"], rec["term"],
                 rec["mention_usable"], rec["decision_usable"], rec["job_id"], rec["act_type"],
                 rec["direction"], rec["decision_status"], rec["related"], rec["created_at"],
+                rec.get("named_party") or "",
             ),
         )
         self.conn.commit()
@@ -922,21 +1079,15 @@ class Engine:
         pairs = LEGAL_PAIRS.get(source, set())
         if (kind, channel) not in pairs:
             return {"ok": False, "reason": "field-fail", "rule": "illegal_pair"}
-        if source == "legal":
-            party = (it.get("named_party") or "").strip().lower()
-            if party in ("the administration", "administration"):
+        if source == "legal" or kind == "legal":
+            raw_party = it.get("named_party")
+            if raw_party is None or str(raw_party).strip() == "":
                 return {"ok": False, "reason": "field-fail", "rule": "named_party"}
-            if "donald trump" not in party:
-                related = it.get("related_remarks") or []
-                has = False
-                for rid in related:
-                    row = self.conn.execute(
-                        "SELECT source FROM records WHERE record_id=?", (rid,)
-                    ).fetchone()
-                    if row and row["source"] in ("whitehouse_actions", "federal_register"):
-                        has = True
-                if not has:
-                    return {"ok": False, "reason": "field-fail", "rule": "named_party"}
+            party = str(raw_party).strip()
+            if party == "the administration":
+                return {"ok": False, "reason": "field-fail", "rule": "named_party"}
+            if party != "Donald Trump":
+                return {"ok": False, "reason": "field-fail", "rule": "named_party"}
         if not it.get("attributed", True):
             return {"ok": False, "reason": "field-fail", "rule": "attribution"}
         if not (it.get("text") or "").strip():
@@ -1041,6 +1192,7 @@ class Engine:
         d["mention_usable"] = bool(d["mention_usable"])
         d["decision_usable"] = bool(d["decision_usable"])
         d["related"] = json.loads(d.get("related") or "[]")
+        d["named_party"] = d.get("named_party") or ""
         if version_override:
             d["text"] = version_override["text"]
             d["text_hash"] = version_override["text_hash"]
@@ -1100,6 +1252,8 @@ class Engine:
         return rows
 
     def get_record(self, record_id, text_version=None):
+        if self.read_down:
+            return None
         r = self.conn.execute("SELECT * FROM records WHERE record_id=?", (record_id,)).fetchone()
         if not r:
             return None
@@ -1123,6 +1277,10 @@ class Engine:
                 if k in ("event_time", "published_time") and val:
                     dt = _parse_dt(val)
                     val = dt.isoformat() if dt else val
+                if k == "named_party":
+                    val = val or ""
+                    if r.get("kind") != "legal":
+                        val = val or ""
                 item[k] = val
             out.append(item)
         return out
@@ -1145,6 +1303,8 @@ class Engine:
         return [dict(r) for r in rows]
 
     def get_preference(self, topic):
+        if self.read_down:
+            return None
         r = self.conn.execute("SELECT payload FROM preferences WHERE topic=?", (topic,)).fetchone()
         if not r:
             self._rebuild_preferences()
@@ -1330,7 +1490,7 @@ class Engine:
                 all_stale = all(health[s]["cadence_stale"] for s in covers)
                 if all_stale and failed_clause == "—":
                     failed_clause = "stale covering sources"
-                elif all_stale:
+                elif all_stale and failed_clause != COPY["zero_usable"]:
                     failed_clause = failed_clause + "; stale covering sources"
                 health_v = "not-ready" if (thin or all_stale) else "ready"
                 topic_channel.append({

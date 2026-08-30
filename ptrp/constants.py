@@ -1,4 +1,4 @@
-"""Closed enums and copy bank from Approved Spec v5. Do not extend."""
+"""Closed enums and copy bank from Approved Spec v7."""
 
 from __future__ import annotations
 
@@ -110,6 +110,16 @@ COPY = {
     "nothing_export": "Nothing to export.",
     "cancel_toast": "Job cancelled. Stayed clean remain. In-flight quarantined as job_stopped.",
     "delete_records": "Delete clean records? Confirm. Cancel leaves records.",
+    "stop_worker": "Stop the worker? Running jobs will fail with worker_lost.",
+    "start_worker": "Start worker",
+    "restart_app": "Restart the app? The knowledge base stays. Running jobs fail with worker_lost.",
+    "search_cannot": "Search cannot run.",
+    "getrecord_cannot": "GetRecord cannot run.",
+    "getpref_cannot": "GetPreference cannot run.",
+    "export_cannot": "Export cannot run.",
+    "operator_item_need": "Operator item needs source, locator, text, kind, and channel.",
+    "operator_item_pin": "A written_social Operator item is refused if no pin is set.",
+    "zero_usable": "zero usable",
 }
 
 STATUS_PILLS = [
@@ -127,6 +137,6 @@ WRITE_TYPES = {
 EXPORT_FIELDS = [
     "record_id", "text_version", "text_hash", "channel", "event_time",
     "published_time", "completeness", "mention_usable", "decision_usable",
-    "kind", "source", "text",
+    "kind", "source", "text", "named_party",
 ]
 

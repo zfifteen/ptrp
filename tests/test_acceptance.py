@@ -267,6 +267,7 @@ def test_A9_browse_clean_record_read_only(env):
     got = e.get_record(rec["record_id"])
     assert "confidence" not in got
     assert got["text"] == rec["text"]
+    assert "named_party" in got
 
 
 def test_A10_export_retrieval_set_section6_fields(env):
@@ -289,6 +290,7 @@ def test_A10_export_retrieval_set_section6_fields(env):
         "kind",
         "source",
         "text",
+        "named_party",
     }
     assert set(row.keys()) == expected
     assert "confidence" not in row

@@ -2,7 +2,9 @@
 
 PTRP is a standalone single-operator pipeline. Fate ingests public Trump records into one knowledge base and runs jobs from four screens: Dashboard, Control, Records, and Quarantine.
 
-This tree implements **Approved Spec v5** (`docs/APPROVED_SPEC.md`). There is no first-run wizard. Factory boot enables all eleven sources. The schedule clock is 09:00 America/New_York.
+This tree implements **Approved Spec v7** (`docs/APPROVED_SPEC.md`). There is no first-run wizard. Factory boot enables all eleven sources. The schedule clock is 09:00 America/New_York.
+
+Operator controls in this Spec: Stop / Start worker, Restart the app, Records reads, Fail next load, per-source Connector, targeted Operator item, Probe clock, and topic rows before ingest. Clean legal records store `named_party`. Displayed times are America/New_York labeled ET; stored times are UTC. Operator screens never show a UTC timestamp.
 
 ## Requirements
 
@@ -55,4 +57,4 @@ python -m pytest
 
 ## Knowledge base
 
-One SQLite file (WAL). Restart keeps record ids. Job history is append-only. Typed `DELETE` on Control → Sources danger zone removes clean records and derived preferences; jobs and raw artifacts remain.
+One SQLite file (WAL). Restart the app keeps record ids, enable/disable, topics, pins, and allowlist. Job history is append-only. Typed `DELETE` on Control → Sources danger zone removes clean records and derived preferences; jobs and raw artifacts remain. Restart the app is not typed DELETE.
