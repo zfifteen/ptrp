@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ptrp.constants import (
     CADENCE,
@@ -18,7 +18,6 @@ from ptrp.constants import (
     JOB_TYPES,
     KINDS,
     SOURCES,
-    STATUS_PILLS,
     TERMS,
 )
 from ptrp.engine import Engine, format_et
@@ -35,6 +34,33 @@ def _esc(s):
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def _truthy(v):
+    if v is True:
+        return True
+    if v is False or v is None or v == "":
+        return False
+    return str(v).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _json_safe(obj):
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(x) for x in obj]
+    return str(obj)
+
+
+def _blank(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
 
 
 def chrome(engine, active, body, extra_banner=""):
@@ -66,15 +92,18 @@ nav a.active{{font-weight:700;border-bottom:2px solid #111}}
 .banner{{background:#111;color:#fff;padding:.5rem 1rem}}
 .pill{{display:inline-block;padding:.1rem .4rem;border-radius:999px;border:1px solid #888;font-variant-numeric:tabular-nums}}
 .pill.succeeded_empty{{background:#e8f5e9}}
+.pill.succeeded{{background:#c8e6c9}}
+.pill.failed{{background:#ffebee}}
+.overlay{{border:1px solid #ccc;padding:.75rem;margin:1rem 0;background:#fafafa}}
+.overlay[hidden],.overlay.is-hidden{{display:none}}
+.helper{{color:#444;font-size:.9rem}}
+.error{{color:#a00}}
+.toast{{background:#e8f5e9;padding:.5rem;margin:.5rem 0}}
+button:disabled{{opacity:.5}}
+.kind-tile{{display:inline-block;min-width:6rem;border:1px solid #ddd;padding:.5rem;margin:.25rem}}
 main{{padding:1rem}}
 table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}
 th,td{{border-bottom:1px solid #eee;padding:.35rem .4rem;text-align:left}}
-.tiles span{{display:inline-block;margin:.25rem 1rem .25rem 0}}
-.overlay{{border:1px solid #ccc;padding:.75rem;margin:1rem 0;background:#fafafa}}
-.helper{{color:#444;font-size:.9rem}}
-.error{{color:#a00}}
-button:disabled{{opacity:.5}}
-.kind-tile{{display:inline-block;min-width:6rem;border:1px solid #ddd;padding:.5rem;margin:.25rem}}
 </style></head>
 <body>
 <header>
@@ -128,11 +157,14 @@ def render_dashboard(engine: Engine) -> str:
         last = format_et(h["last_succeeded"]) if h["last_succeeded"] else "never"
         last_e = format_et(h["last_succeeded_empty"]) if h["last_succeeded_empty"] else "none"
         en = "enabled" if h["enabled"] else "disabled"
-        fresh = "no cadence" if h["cadence"] == "none" else (
-            f'{h["cadence"]}'
-            + (" cadence stale" if h["cadence_stale"] else "")
-            + (" 24h stale" if h["stale_24h"] else "")
-        )
+        if h["cadence"] == "none":
+            fresh = "no cadence"
+        else:
+            fresh = f'{_esc(h.get("cadence_age") or "")} {_esc(h.get("age_24h") or "")}'
+            if h["cadence_stale"]:
+                fresh += ' <span class="pill">cadence stale</span>'
+            if h["stale_24h"]:
+                fresh += ' <span class="pill">24h stale</span>'
         blocked = h["blocked"] or ""
         err = h["last_error"] or "—"
         rows += (
@@ -169,22 +201,109 @@ def render_dashboard(engine: Engine) -> str:
     return chrome(engine, "dashboard", body)
 
 
-def render_control(engine: Engine, request: Request) -> str:
-    tab = request.query_params.get("tab", "run")
-    job_id = request.query_params.get("job")
-    status_f = request.query_params.get("status")
+def _parse_maybe(v):
+    from ptrp.engine import _parse_dt
+    return _parse_dt(v)
+
+
+def _hidden_pending(pending):
+    if not pending:
+        return ""
+    skip = {"dup_action", "confirm", "confirm_disabled", "confirm_reindex", "confirm_refresh"}
+    out = []
+    for k, v in pending.items():
+        if k in skip or v is None or v == "":
+            continue
+        if k == "force_refetch" and not _truthy(v):
+            continue
+        out.append(f'<input type="hidden" name="{_esc(k)}" value="{_esc(v)}">')
+    return "".join(out)
+
+
+def _job_actions(j, include_confirm_copy=False):
+    bits = []
+    st = j["status"]
+    jid = j["id"]
+    if st in ("queued", "running"):
+        copy = COPY["cancel_confirm"].format(id=jid)
+        if include_confirm_copy:
+            bits.append(f"<p>{_esc(copy)}</p>")
+        bits.append(
+            f'<form method="post" action="/jobs/{jid}/cancel" style="display:inline">'
+            f'<button>Cancel</button></form>'
+        )
+    if st == "failed":
+        bits.append(
+            f'<form method="post" action="/jobs/{jid}/retry" style="display:inline">'
+            f'<button>Retry</button></form>'
+        )
+        if not j.get("acknowledged"):
+            bits.append(
+                f'<form method="post" action="/jobs/{jid}/ack" style="display:inline">'
+                f'<button>Ack</button></form>'
+            )
+    return " ".join(bits)
+
+
+def render_control(engine: Engine, request: Request, error="", toast="", overlay=None, pending=None, blocking=None) -> str:
+    qp = request.query_params
+    tab = qp.get("tab", "run")
+    job_id = qp.get("job")
+    status_f = qp.get("status")
+    source_f = qp.get("source") if tab == "jobs" else None
+    type_f = qp.get("type") if tab == "jobs" else None
+    date_start = qp.get("date_start")
+    date_end = qp.get("date_end")
+    overlay = overlay or qp.get("overlay")
+    error = error or qp.get("error") or ""
+    toast = toast or qp.get("toast") or ""
+    pending = pending or {}
+    run_source = qp.get("source") if tab != "jobs" else pending.get("source", "")
+    if not run_source:
+        run_source = pending.get("source") or (qp.get("source") if tab == "run" else "") or ""
+
+    def ov_hidden(name):
+        return "" if overlay == name else " hidden"
+
+    src_opts = ['<option value="">(none)</option>']
+    for s in SOURCES:
+        sel = " selected" if s == run_source else ""
+        src_opts.append(f'<option value="{s}"{sel}>{s}</option>')
+    src_opts.append('<option value="global">global</option>')
+    type_opts = []
+    run_type = pending.get("type") or "incremental"
+    for t in JOB_TYPES:
+        sel = " selected" if t == run_type else ""
+        type_opts.append(f'<option value="{t}"{sel}>{t}</option>')
+
+    pending_html = _hidden_pending(pending) or _hidden_pending({
+        "type": pending.get("type") or "incremental",
+        "source": run_source,
+        "window_start": pending.get("window_start", ""),
+        "window_end": pending.get("window_end", ""),
+        "topic": pending.get("topic", ""),
+        "query": pending.get("query", ""),
+        "occasion": pending.get("occasion", ""),
+    })
+
+    run_error = f'<p class="error" id="run-error">{_esc(error)}</p>' if error else ""
+    toast_html = f'<p class="toast" id="toast">{_esc(toast)}</p>' if toast else ""
+
+    blocking_id = blocking or qp.get("blocking") or ""
+    ov_dup_copy = ""
+    if blocking_id:
+        ov_dup_copy = f"Write-scoped job {_esc(blocking_id)} occupies source."
     overlays = f"""
 <div id="ov-run" class="overlay">Run job form
+  {run_error}
   <form method="post" action="/jobs">
-    <label>Type <select name="type">{''.join(f'<option value="{t}">{t}</option>' for t in JOB_TYPES)}</select></label>
-    <label>Source <select name="source"><option value="">(none)</option>
-      {''.join(f'<option value="{s}">{s}</option>' for s in SOURCES)}
-      <option value="global">global</option></select></label>
-    <label>Date window start <input name="window_start"></label>
-    <label>Date window end <input name="window_end"></label>
+    <label>Type <select name="type">{''.join(type_opts)}</select></label>
+    <label>Source <select name="source">{''.join(src_opts)}</select></label>
+    <label>Date window start <input name="window_start" value="{_esc(pending.get('window_start', ''))}"></label>
+    <label>Date window end <input name="window_end" value="{_esc(pending.get('window_end', ''))}"></label>
     <label>Topic <select name="topic"><option value=""></option>
       {''.join(f'<option>{_esc(t)}</option>' for t in engine.list_topics())}</select></label>
-    <label>Query <input name="query"></label>
+    <label>Query <input name="query" value="{_esc(pending.get('query', ''))}"></label>
     <label>Occasion <select name="occasion"><option value=""></option>
       {''.join(f'<option>{_esc(t)}</option>' for t in engine.list_occasions())}</select></label>
     <label><input type="checkbox" name="force_refetch"> {COPY["force_refetch"]}</label>
@@ -192,17 +311,58 @@ def render_control(engine: Engine, request: Request) -> str:
   </form>
   <p class="helper">Source is required. Backfill needs a date window. Targeted needs a topic, query, or occasion. Pick a source or global. Start must be on or before end.</p>
 </div>
-<div id="ov-disabled" class="overlay">{COPY["disabled_confirm"]}</div>
-<div id="ov-reindex" class="overlay">{COPY["reindex_confirm"]}</div>
-<div id="ov-refresh" class="overlay">{COPY["refresh_confirm"]}</div>
-<div id="ov-delete" class="overlay">{COPY["delete_base"]}
-  <form method="post" action="/danger/delete-base"><input name="typed" placeholder="DELETE"><button>Confirm</button></form>
+<div id="ov-disabled" class="overlay"{ov_hidden("ov-disabled")}>{COPY["disabled_confirm"]}
+  <form method="post" action="/jobs">{pending_html}
+    <input type="hidden" name="confirm_disabled" value="1">
+    <button>Confirm</button>
+  </form>
+  <a href="/control?tab=run">Cancel</a>
 </div>
-<div id="ov-dup" class="overlay">Queue behind / Don't start</div>
+<div id="ov-reindex" class="overlay"{ov_hidden("ov-reindex")}>{COPY["reindex_confirm"]}
+  <form method="post" action="/jobs">
+    <input type="hidden" name="type" value="re_index">
+    <input type="hidden" name="source" value="global">
+    <input type="hidden" name="confirm_reindex" value="1">
+    <button>Confirm</button>
+  </form>
+  <a href="/control?tab=run">Cancel</a>
+</div>
+<div id="ov-refresh" class="overlay"{ov_hidden("ov-refresh")}>{COPY["refresh_confirm"]}
+  <form method="post" action="/jobs">
+    <input type="hidden" name="type" value="refresh_preferences">
+    <input type="hidden" name="source" value="global">
+    <input type="hidden" name="confirm_refresh" value="1">
+    <button>Confirm</button>
+  </form>
+  <a href="/control?tab=run">Cancel</a>
+</div>
+<div id="ov-delete" class="overlay"{ov_hidden("ov-delete")}>{COPY["delete_base"]}
+  <form method="post" action="/danger/delete-base">
+    <input name="typed" id="delete-typed" placeholder="DELETE"
+      oninput="document.getElementById('btn-delete-confirm').disabled = this.value !== 'DELETE'">
+    <button id="btn-delete-confirm" disabled>Confirm</button>
+  </form>
+  <a href="/control?tab=sources">Cancel</a>
+</div>
+<div id="ov-delete-records" class="overlay"{ov_hidden("ov-delete-records")}>{COPY["delete_records"]}
+  <form method="post" action="/danger/delete-records">
+    <input type="hidden" name="confirm" value="1">
+    <button>Confirm</button>
+  </form>
+  <a href="/control?tab=sources">Cancel</a>
+</div>
+<div id="ov-dup" class="overlay"{ov_hidden("ov-dup")}>{ov_dup_copy or "Queue behind / Don't start"}
+  <form method="post" action="/jobs" style="display:inline">{pending_html}
+    <input type="hidden" name="dup_action" value="queue_behind">
+    <button>Queue behind</button>
+  </form>
+  <form method="post" action="/jobs" style="display:inline">{pending_html}
+    <input type="hidden" name="dup_action" value="dont_start">
+    <button>Don't start</button>
+  </form>
+</div>
 """
-    jobs = engine.list_jobs()
-    if status_f and status_f != "all":
-        jobs = [j for j in jobs if j["status"] == status_f]
+    jobs = engine.list_jobs(status=status_f, source=source_f, type=type_f, date_start=date_start, date_end=date_end)
     job_rows = ""
     if not jobs:
         job_rows = f'<tr><td colspan="8">{COPY["no_jobs"]}</td></tr>'
@@ -211,7 +371,8 @@ def render_control(engine: Engine, request: Request) -> str:
             job_rows += (
                 f'<tr><td><a href="/control?job={j["id"]}">{j["id"]}</a></td>'
                 f'<td>{j["type"]}</td><td>{j["source"]}</td><td>{j["triggered_by"]}</td>'
-                f'<td class="pill">{j["status"]}</td><td>{j["fetched"]}</td></tr>'
+                f'<td class="pill {j["status"]}">{j["status"]}</td><td>{j["fetched"]}</td>'
+                f'<td>{_job_actions(j)}</td></tr>'
             )
     job_detail = ""
     if job_id:
@@ -220,9 +381,15 @@ def render_control(engine: Engine, request: Request) -> str:
         except KeyError:
             j = None
         if j:
+            arts = engine.list_artifacts(job_id=job_id)
+            recs = engine.records_for_job(job_id)
+            qs = engine.quarantine_for_job(job_id)
+            art_links = " ".join(f'<a href="/records?record={_esc(a.get("record_id") or "")}">{_esc(a["id"])}</a>' for a in arts) or "—"
+            rec_links = " ".join(f'<a href="/records?record={r["record_id"]}">{r["record_id"]}</a>' for r in recs) or "—"
+            q_links = " ".join(f'<a href="/quarantine?item={q["id"]}">{q["id"]}</a>' for q in qs) or "—"
             job_detail = f"""
 <div id="ov-job" class="overlay">
-  <p>{j["id"]} {j["type"]} {j["source"]} <span class="pill">{j["status"]}</span> {j["triggered_by"]}</p>
+  <p>{j["id"]} {j["type"]} {j["source"]} <span class="pill {j["status"]}">{j["status"]}</span> {j["triggered_by"]}</p>
   <p>params {_esc(j["params"])}</p>
   <p>created {format_et(_parse_maybe(j["created"]))} started {format_et(_parse_maybe(j.get("started")))} finished {format_et(_parse_maybe(j.get("finished")))}</p>
   <p>fetched {j["fetched"]} written {j["written"]} updated {j["updated"]} unchanged {j["unchanged"]} quarantined {j["quarantined"]} fetch fail {j["fetch_fail"]}</p>
@@ -230,6 +397,10 @@ def render_control(engine: Engine, request: Request) -> str:
   <p class="helper">{COPY["stopped_helper"]}</p>
   <p>error {_esc(j.get("error") or "—")}</p>
   <p>log {_esc(j.get("log"))}</p>
+  <p>artifacts {art_links}</p>
+  <p>clean writes/updates {rec_links}</p>
+  <p>quarantined items {q_links}</p>
+  {_job_actions(j, include_confirm_copy=True)}
 </div>"""
     src_rows = ""
     for s in SOURCES:
@@ -238,25 +409,49 @@ def render_control(engine: Engine, request: Request) -> str:
         nxt_s = COPY["not_scheduled"] if nxt == COPY["not_scheduled"] else format_et(nxt if hasattr(nxt, "astimezone") else nxt)
         cad = CADENCE.get(s) or "none"
         en = "enabled" if st["enabled"] else "disabled"
+        next_en = "0" if st["enabled"] else "1"
         src_rows += (
-            f'<tr id="next-run"><td>{s}</td><td class="pill">{en}</td><td>{cad}</td>'
-            f'<td>{nxt_s}</td><td><a href="/control?tab=run&source={s}">Run</a></td></tr>'
+            f'<tr id="next-run"><td>{s}</td>'
+            f'<td><form method="post" action="/sources/{s}/enabled" style="display:inline">'
+            f'<input type="hidden" name="enabled" value="{next_en}">'
+            f'<button class="toggle">{en}</button></form></td>'
+            f'<td>{cad}</td><td>{nxt_s}</td>'
+            f'<td><a href="/control?tab=run&source={s}">Run</a></td></tr>'
         )
+    topics_l = engine.list_topics()
+    occ_l = engine.list_occasions()
+    al_l = engine.allowlist()
     vocabs = f"""
 <div id="tab-vocabs">
-  <h3>Topics</h3><ul>{''.join(f'<li>{_esc(t)}</li>' for t in engine.list_topics())}</ul>
+  <h3>Topics</h3>
+  <ul>{''.join(f'<li>{_esc(t)} <form method="post" action="/vocab/topics/remove" style="display:inline"><input type="hidden" name="tag" value="{_esc(t)}"><button>Remove</button></form></li>' for t in topics_l)}</ul>
   <form method="post" action="/vocab/topics"><input name="tag"><button>Add</button></form>
-  <h3>Occasions</h3><ul>{''.join(f'<li>{_esc(t)}</li>' for t in engine.list_occasions())}</ul>
+  <h3>Occasions</h3>
+  <ul>{''.join(f'<li>{_esc(t)} <form method="post" action="/vocab/occasions/remove" style="display:inline"><input type="hidden" name="tag" value="{_esc(t)}"><button>Remove</button></form></li>' for t in occ_l)}</ul>
+  <form method="post" action="/vocab/occasions"><input name="tag"><button>Add</button></form>
   <h3>Interview-outlet allowlist</h3>
   <p class="helper">Empty allowlist blocks the interviews source. Empty jobs do not make it fresh.</p>
-  <ul>{''.join(f'<li>{_esc(o)}</li>' for o in engine.allowlist())}</ul>
+  <ul>{''.join(f'<li>{_esc(o)} <form method="post" action="/vocab/allowlist/remove" style="display:inline"><input type="hidden" name="outlet" value="{_esc(o)}"><button>Remove</button></form></li>' for o in al_l)}</ul>
+  <form method="post" action="/vocab/allowlist"><input name="outlet"><button>Add</button></form>
   <h3>Official account pins</h3>
+  <form method="post" action="/vocab/pins">
+    <label>X pin: <input name="x_personal" value="{_esc(engine.get_pin("x_personal"))}"></label>
+    <label>Truth Social pin: <input name="truth_social" value="{_esc(engine.get_pin("truth_social"))}"></label>
+    <button>Save</button>
+  </form>
   <p>X pin: {_esc(engine.get_pin("x_personal")) or "(empty)"}</p>
   <p>Truth Social pin: {_esc(engine.get_pin("truth_social")) or "(empty)"}</p>
   <p class="helper">Clean written_social attribution must match these pins. A lookalike is quarantined.</p>
 </div>
 """
+    src_sel = ['<option value="all">all</option>'] + [f'<option value="{s}"{" selected" if source_f==s else ""}>{s}</option>' for s in list(SOURCES)+["global"]]
+    type_sel = ['<option value="all">all</option>'] + [f'<option value="{t}"{" selected" if type_f==t else ""}>{t}</option>' for t in JOB_TYPES]
+    st_sel = ['<option value="all">all</option>'] + [
+        f'<option {"selected" if status_f==s else ""} value="{s}">{s}</option>'
+        for s in ("queued","running","succeeded","succeeded_empty","failed","cancelled")
+    ]
     body = f"""
+{toast_html}
 <div>
   <a href="/control?tab=run">Run job</a>
   <a href="/control?tab=jobs">Jobs</a>
@@ -267,12 +462,14 @@ def render_control(engine: Engine, request: Request) -> str:
 <div id="tab-jobs">
   <form method="get" action="/control">
     <input type="hidden" name="tab" value="jobs">
-    <select name="status"><option value="all">all</option>
-      {''.join(f'<option {"selected" if status_f==s else ""} value="{s}">{s}</option>' for s in ("queued","running","succeeded","succeeded_empty","failed","cancelled"))}
-    </select>
+    <select name="status">{''.join(st_sel)}</select>
+    <select name="source">{''.join(src_sel)}</select>
+    <select name="type">{''.join(type_sel)}</select>
+    <label>date <input name="date_start" type="date" value="{_esc(date_start or '')}">
+      <input name="date_end" type="date" value="{_esc(date_end or '')}"></label>
     <button>Filter</button>
   </form>
-  <table><thead><tr><th>id</th><th>type</th><th>source</th><th>triggered_by</th><th>status</th><th>fetched</th></tr></thead>
+  <table><thead><tr><th>id</th><th>type</th><th>source</th><th>triggered_by</th><th>status</th><th>fetched</th><th>actions</th></tr></thead>
   <tbody>{job_rows}</tbody></table>
   {job_detail}
 </div>
@@ -280,8 +477,9 @@ def render_control(engine: Engine, request: Request) -> str:
   <table><thead><tr><th>Source</th><th>Enabled</th><th>Cadence</th><th>Next scheduled run</th><th>Run</th></tr></thead>
   <tbody>{src_rows}</tbody></table>
   <div class="danger">Delete clean records…
-    <form method="post" action="/danger/delete-records"><button>Confirm delete records</button></form>
-    Delete the base… {COPY["delete_base"]}
+    <a href="/control?tab=sources&overlay=ov-delete-records">Delete clean records</a>
+    <a href="/control?tab=sources&overlay=ov-delete">Delete the base…</a>
+    {COPY["delete_base"]}
   </div>
 </div>
 {vocabs}
@@ -289,9 +487,18 @@ def render_control(engine: Engine, request: Request) -> str:
     return chrome(engine, "control", body)
 
 
-def _parse_maybe(v):
-    from ptrp.engine import _parse_dt
-    return _parse_dt(v)
+def _pref_copy(pref):
+    if not pref:
+        return "No derived preference for this topic."
+    topic = pref.get("topic") or ""
+    sup = ", ".join(pref.get("supporting") or []) or "none"
+    con = ", ".join(pref.get("contradicting") or []) or "none"
+    cons = pref.get("consistency") or "none"
+    terms = ", ".join(pref.get("terms") or []) or "none"
+    return (
+        f"Topic {topic}. Supporting records: {sup}. Contradicting records: {con}. "
+        f"Consistency: {cons}. Terms: {terms}."
+    )
 
 
 def render_records(engine: Engine, request: Request) -> str:
@@ -310,18 +517,48 @@ def render_records(engine: Engine, request: Request) -> str:
         filters["channel"] = qp.get("channel")
     if qp.get("q"):
         filters["query"] = qp.get("q")
+    if qp.get("topic"):
+        filters["topic"] = qp.get("topic")
+    if qp.get("occasion"):
+        filters["occasion"] = qp.get("occasion")
+    if qp.get("term"):
+        filters["term"] = qp.get("term")
+    if qp.get("event_start"):
+        filters["event_start"] = qp.get("event_start")
+    if qp.get("event_end"):
+        filters["event_end"] = qp.get("event_end")
+    if qp.get("pub_start"):
+        filters["pub_start"] = qp.get("pub_start")
+    if qp.get("pub_end"):
+        filters["pub_end"] = qp.get("pub_end")
+    if qp.get("mention_usable") == "yes":
+        filters["mention_usable"] = True
+    elif qp.get("mention_usable") == "no":
+        filters["mention_usable"] = False
+    if qp.get("decision_usable") == "yes":
+        filters["decision_usable"] = True
+    elif qp.get("decision_usable") == "no":
+        filters["decision_usable"] = False
     recs = engine.search(**filters)
     rows = ""
     if not recs:
-        rows = f'<tr><td colspan="8">{COPY["no_records"]}</td></tr>'
+        rows = f'<tr><td colspan="11">{COPY["no_records"]}</td></tr>'
     else:
         for r in recs:
+            topics = r.get("topics") or []
+            if isinstance(topics, str):
+                topics = topics
+            else:
+                topics = ", ".join(topics)
             rows += (
                 f'<tr><td><a href="/records?record={r["record_id"]}">{r["record_id"]}</a></td>'
                 f'<td>{r["kind"]}</td><td>{r["source"]}</td><td>{r["channel"]}</td>'
                 f'<td>{format_et(_parse_maybe(r.get("event_time")))}</td>'
-                f'<td>{r["completeness"]}</td><td>{"yes" if r["mention_usable"] else "no"}</td>'
-                f'<td>{_esc(r["title"])}</td></tr>'
+                f'<td>{format_et(_parse_maybe(r.get("published_time")))}</td>'
+                f'<td>{r["completeness"]}</td>'
+                f'<td>{"yes" if r["mention_usable"] else "no"}</td>'
+                f'<td>{"yes" if r["decision_usable"] else "no"}</td>'
+                f'<td>{_esc(r["title"])}</td><td>{_esc(topics)}</td></tr>'
             )
     export_btn = (
         f'<a id="btn-export" href="/records/export">{COPY["export"]}</a>'
@@ -337,18 +574,24 @@ def render_records(engine: Engine, request: Request) -> str:
                 "SELECT text_version FROM record_versions WHERE record_id=? ORDER BY text_version",
                 (rec_id,),
             ).fetchall()
-            vlist = " ".join(f'v{v["text_version"]}' for v in vers)
+            vlist = " ".join(
+                f'<a href="/records?record={rec_id}&version={v["text_version"]}">v{v["text_version"]}</a>'
+                for v in vers
+            )
+            arts = engine.list_artifacts(record_id=rec_id)
+            art = arts[0]["id"] if arts else "—"
             pref_cites = "No derived preference cites this record."
             books_h = COPY["books_helper"] if rec["channel"] == "other" else ""
+            topics = rec.get("topics") or []
             drawer = f"""
 <div id="ov-record" class="overlay">
-  <p>{rec["record_id"]} {rec["kind"]} {rec["source"]} {rec["channel"]} {rec["completeness"]}
+  <p>{rec["record_id"]} {rec["kind"]} {rec["source"]} {rec["channel"]} completeness {rec["completeness"]}
      mention-usable {rec["mention_usable"]} decision-usable {rec["decision_usable"]}</p>
   <div id="record-text">{_esc(rec["text"])}</div>
   <p>Version switcher {vlist}</p>
-  <p>Extract topics {rec["topics"]} people {rec["people"]} phrases {rec["phrases"]} occasion {rec["occasion"]}</p>
+  <p>Extract topics {_esc(topics)} people {rec["people"]} phrases {rec["phrases"]} occasion {rec["occasion"]}</p>
   <p>event_time {format_et(_parse_maybe(rec.get("event_time")))} published_time {format_et(_parse_maybe(rec.get("published_time")))}</p>
-  <p>Provenance artifact job {rec["job_id"]} source {rec["source"]}</p>
+  <p>Provenance artifact {_esc(art)} job <a href="/control?job={rec["job_id"]}">{rec["job_id"]}</a> source {rec["source"]}</p>
   <p>{pref_cites}</p>
   <div id="record-correct">
     <a href="/control?tab=sources">Open source config</a>
@@ -358,6 +601,8 @@ def render_records(engine: Engine, request: Request) -> str:
   <p class="helper">{COPY["correction"]}</p>
   <p class="helper">{books_h}</p>
 </div>"""
+    topic_opts = "".join(f'<option value="{_esc(t)}">{_esc(t)}</option>' for t in engine.list_topics())
+    occ_opts = "".join(f'<option value="{_esc(t)}">{_esc(t)}</option>' for t in engine.list_occasions())
     body = f"""
 <form id="records-filters" method="get" action="/records">
   <input name="q" placeholder="Search">
@@ -365,24 +610,28 @@ def render_records(engine: Engine, request: Request) -> str:
   <select name="source"><option value="">all</option>{''.join(f'<option>{s}</option>' for s in SOURCES)}</select>
   <label>Event time (ET) <input name="event_start"><input name="event_end"></label>
   <label>Published time (ET) <input name="pub_start"><input name="pub_end"></label>
+  <label>topic <select name="topic"><option value="">all</option>{topic_opts}</select></label>
   <select name="channel"><option value="">all</option>{''.join(f'<option>{c}</option>' for c in CHANNELS)}</select>
+  <label>occasion <select name="occasion"><option value="">all</option>{occ_opts}</select></label>
   <select name="term"><option value="">all</option>{''.join(f'<option>{t}</option>' for t in TERMS)}</select>
   <select name="mention_usable"><option value="">all</option><option>yes</option><option>no</option></select>
   <select name="decision_usable"><option value="">all</option><option>yes</option><option>no</option></select>
   <button>Apply</button>
+  <a href="/records">Clear</a>
 </form>
 {export_btn}
 <form method="get" action="/records"><input name="pref_topic" placeholder="topic">
 <button>Open preference</button></form>
 <table><thead><tr><th>id</th><th>kind</th><th>source</th><th>channel</th><th>event_time ET</th>
-<th>completeness</th><th>mention-usable</th><th>title</th></tr></thead>
+<th>published_time ET</th><th>completeness</th><th>mention-usable</th><th>decision-usable</th>
+<th>title</th><th>topics</th></tr></thead>
 <tbody>{rows}</tbody></table>
 {drawer}
 """
     pref_topic = qp.get("pref_topic")
     if pref_topic:
         pref = engine.get_preference(pref_topic)
-        body += f'<div id="preference">{_esc(pref)}</div>'
+        body += f'<div id="preference">{_esc(_pref_copy(pref))}</div>'
     return chrome(engine, "records", extra + body)
 
 
@@ -440,6 +689,20 @@ def render_quarantine(engine: Engine, request: Request) -> str:
     return chrome(engine, "quarantine", body)
 
 
+def _wants_json(request: Request) -> bool:
+    ct = request.headers.get("content-type", "")
+    return "json" in ct.lower()
+
+
+async def _body(request: Request) -> dict:
+    ct = request.headers.get("content-type", "")
+    if "json" in ct.lower():
+        data = await request.json()
+        return data if isinstance(data, dict) else {}
+    form = await request.form()
+    return {k: form.get(k) for k in form.keys()}
+
+
 def create_app(engine: Engine | None = None, background: bool = False) -> FastAPI:
     if engine is None:
         db = Path(os.environ.get("PTRP_DB", "data/ptrp.sqlite"))
@@ -488,66 +751,203 @@ def create_app(engine: Engine | None = None, background: bool = False) -> FastAP
     def quarantine(request: Request):
         return HTMLResponse(render_quarantine(engine, request))
 
+    def _html_control(request, **kw):
+        return HTMLResponse(render_control(engine, request, **kw))
+
     @app.post("/jobs")
     async def post_job(request: Request):
-        ct = request.headers.get("content-type", "")
-        if "json" in ct:
-            body = await request.json()
-        else:
-            form = await request.form()
-            body = dict(form)
-        r = engine.enqueue_job(
-            type=body.get("type"),
-            source=body.get("source") or None,
-            params={
-                "window_start": body.get("window_start"),
-                "window_end": body.get("window_end"),
-                "topic": body.get("topic"),
-                "query": body.get("query"),
-                "occasion": body.get("occasion"),
-            },
-            force_refetch=bool(body.get("force_refetch")),
-            confirm_disabled=bool(body.get("confirm_disabled")),
-            confirm_reindex=bool(body.get("confirm_reindex")),
-            confirm_refresh=bool(body.get("confirm_refresh")),
-            dup_action=body.get("dup_action"),
-        )
+        try:
+            body = await _body(request)
+        except Exception as exc:
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": str(exc), "job": None}, status_code=200)
+            return _html_control(request, error=str(exc))
+        job_type = _blank(body.get("type"))
+        source = _blank(body.get("source"))
+        confirm = _truthy(body.get("confirm"))
+        try:
+            r = engine.enqueue_job(
+                type=job_type,
+                source=source,
+                params={
+                    "window_start": _blank(body.get("window_start")),
+                    "window_end": _blank(body.get("window_end")),
+                    "topic": _blank(body.get("topic")),
+                    "query": _blank(body.get("query")),
+                    "occasion": _blank(body.get("occasion")),
+                },
+                force_refetch=_truthy(body.get("force_refetch")),
+                confirm_disabled=_truthy(body.get("confirm_disabled")),
+                confirm_reindex=_truthy(body.get("confirm_reindex")) or (confirm and job_type == "re_index"),
+                confirm_refresh=_truthy(body.get("confirm_refresh")) or (confirm and job_type == "refresh_preferences"),
+                dup_action=_blank(body.get("dup_action")),
+            )
+            if r.ok:
+                engine.drain()
+                if r.job and r.job.get("id"):
+                    try:
+                        r.job = engine.get_job(r.job["id"])
+                    except KeyError:
+                        pass
+        except Exception as exc:
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": str(exc), "job": None}, status_code=200)
+            return _html_control(request, error=str(exc))
+        if _wants_json(request):
+            return JSONResponse(_json_safe({
+                "ok": r.ok, "overlay": r.overlay, "message": r.message,
+                "job": r.job, "rejected": r.rejected,
+            }))
+        pending = {
+            "type": job_type or "",
+            "source": source or "",
+            "window_start": body.get("window_start") or "",
+            "window_end": body.get("window_end") or "",
+            "topic": body.get("topic") or "",
+            "query": body.get("query") or "",
+            "occasion": body.get("occasion") or "",
+        }
+        blocking = None
+        if r.overlay == "ov-dup" and r.message:
+            # blocking id lives in occupants; parse from message if present
+            blocking = None
+            occupants = engine._occupants_for(engine._touched(job_type or "incremental", source or "global"))
+            if occupants:
+                blocking = occupants[0]["id"]
         if r.ok:
-            engine.drain()
-        return JSONResponse({"ok": r.ok, "overlay": r.overlay, "message": r.message, "job": r.job, "rejected": r.rejected})
+            return _html_control(request, toast=r.message or "Job enqueued.", overlay=None)
+        return _html_control(
+            request, error=r.message, overlay=r.overlay, pending=pending, blocking=blocking, toast="" if r.overlay else r.message,
+        )
 
     @app.post("/jobs/{job_id}/ack")
-    def ack(job_id: str):
+    async def ack(job_id: str, request: Request):
         engine.ack(job_id)
-        return JSONResponse({"ok": True})
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request, toast="Acknowledged.")
 
     @app.post("/jobs/{job_id}/cancel")
-    def cancel(job_id: str):
+    async def cancel(job_id: str, request: Request):
         r = engine.cancel(job_id)
-        return JSONResponse({"ok": r.ok, "message": r.message})
+        if _wants_json(request):
+            return JSONResponse({"ok": r.ok, "message": r.message})
+        return _html_control(request, toast=r.message if r.ok else "", error="" if r.ok else r.message)
 
     @app.post("/jobs/{job_id}/retry")
-    def retry(job_id: str):
+    async def retry(job_id: str, request: Request):
         r = engine.retry(job_id)
-        return JSONResponse({"ok": r.ok, "job": r.job, "message": r.message, "overlay": r.overlay})
+        if r.ok:
+            engine.drain()
+        if _wants_json(request):
+            return JSONResponse(_json_safe({"ok": r.ok, "job": r.job, "message": r.message, "overlay": r.overlay}))
+        if r.ok:
+            return _html_control(request, toast=r.message or "Retry enqueued.")
+        return _html_control(request, error=r.message, overlay=r.overlay)
 
     @app.post("/danger/delete-base")
     async def del_base(request: Request):
-        form = await request.form()
-        r = engine.delete_base(typed=form.get("typed") or "")
-        return JSONResponse({"ok": r.ok, "message": r.message})
+        try:
+            body = await _body(request)
+        except Exception as exc:
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": str(exc)})
+            return _html_control(request, error=str(exc), overlay="ov-delete")
+        r = engine.delete_base(typed=(body.get("typed") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": r.ok, "message": r.message})
+        if r.ok:
+            return _html_control(request, toast="Base deleted.")
+        return _html_control(request, error=r.message or COPY["delete_base"], overlay="ov-delete")
 
     @app.post("/danger/delete-records")
-    async def del_recs():
-        r = engine.delete_clean_records(confirm=True)
-        return JSONResponse({"ok": r.ok})
+    async def del_recs(request: Request):
+        try:
+            body = await _body(request)
+        except Exception:
+            body = {}
+        confirmed = _truthy(body.get("confirm"))
+        r = engine.delete_clean_records(confirm=confirmed)
+        if _wants_json(request):
+            return JSONResponse({"ok": r.ok, "message": r.message})
+        if r.ok:
+            return _html_control(request, toast="Clean records deleted.")
+        return _html_control(request, overlay="ov-delete-records", error=r.message or COPY["delete_records"])
 
     @app.post("/vocab/topics")
     async def add_topic(request: Request):
-        form = await request.form()
-        if form.get("tag"):
-            engine.add_topic(form.get("tag"))
-        return JSONResponse({"ok": True})
+        try:
+            body = await _body(request)
+        except Exception as exc:
+            if _wants_json(request):
+                return JSONResponse({"ok": False, "message": str(exc)})
+            return _html_control(request, error=str(exc))
+        if body.get("tag"):
+            engine.add_topic(str(body.get("tag")))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request, toast="Topic added.")
+
+    @app.post("/vocab/topics/remove")
+    async def remove_topic(request: Request):
+        body = await _body(request)
+        engine.remove_topic(str(body.get("tag") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request)
+
+    @app.post("/vocab/occasions")
+    async def add_occ(request: Request):
+        body = await _body(request)
+        if body.get("tag"):
+            engine.add_occasion(str(body.get("tag")))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request, toast="Occasion added.")
+
+    @app.post("/vocab/occasions/remove")
+    async def remove_occ(request: Request):
+        body = await _body(request)
+        engine.remove_occasion(str(body.get("tag") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request)
+
+    @app.post("/vocab/allowlist")
+    async def add_al(request: Request):
+        body = await _body(request)
+        engine.add_allowlist(str(body.get("outlet") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request, toast="Outlet added.")
+
+    @app.post("/vocab/allowlist/remove")
+    async def remove_al(request: Request):
+        body = await _body(request)
+        engine.remove_allowlist(str(body.get("outlet") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request)
+
+    @app.post("/vocab/pins")
+    async def save_pins(request: Request):
+        body = await _body(request)
+        if "x_personal" in body:
+            engine.set_pin("x_personal", str(body.get("x_personal") or ""))
+        if "truth_social" in body:
+            engine.set_pin("truth_social", str(body.get("truth_social") or ""))
+        if _wants_json(request):
+            return JSONResponse({"ok": True})
+        return _html_control(request, toast="Pins saved.")
+
+    @app.post("/sources/{source}/enabled")
+    async def set_enabled(source: str, request: Request):
+        body = await _body(request)
+        enabled = _truthy(body.get("enabled"))
+        engine.set_source_enabled(source, enabled)
+        if _wants_json(request):
+            return JSONResponse({"ok": True, "enabled": enabled})
+        return _html_control(request)
 
     @app.post("/quarantine/{qid}/accept")
     def q_acc(qid: str):

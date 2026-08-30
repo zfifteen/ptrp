@@ -108,6 +108,8 @@ COPY = {
     "refresh_confirm": "Rebuild derived preferences from current clean records. Confirm.",
     "books_helper": "Books are not mention-usable. Channel is other.",
     "nothing_export": "Nothing to export.",
+    "cancel_toast": "Job cancelled. Stayed clean remain. In-flight quarantined as job_stopped.",
+    "delete_records": "Delete clean records? Confirm. Cancel leaves records.",
 }
 
 STATUS_PILLS = [
@@ -127,3 +129,4 @@ EXPORT_FIELDS = [
     "published_time", "completeness", "mention_usable", "decision_usable",
     "kind", "source", "text",
 ]
+

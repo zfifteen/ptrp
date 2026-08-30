@@ -296,12 +296,27 @@ class Engine:
             j["in_flight"] = json.loads(j["in_flight"] or "[]")
         return j
 
-    def list_jobs(self):
+    def list_jobs(self, status=None, source=None, type=None, date_start=None, date_end=None):
         rows = self.conn.execute("SELECT * FROM jobs ORDER BY created").fetchall()
         out = []
         for r in rows:
             j = dict(r)
             j["params"] = json.loads(j["params"] or "{}")
+            if status and status != "all" and j["status"] != status:
+                continue
+            if source and source != "all" and j["source"] != source:
+                continue
+            if type and type != "all" and j["type"] != type:
+                continue
+            created = _parse_dt(j.get("created"))
+            if date_start:
+                ds = _parse_dt(date_start)
+                if ds and created and created < ds:
+                    continue
+            if date_end:
+                de = _parse_dt(date_end)
+                if de and created and created > de + timedelta(days=1):
+                    continue
             out.append(j)
         return out
 
@@ -338,11 +353,19 @@ class Engine:
         self.conn.execute("INSERT OR IGNORE INTO topics (tag) VALUES (?)", (tag,))
         self.conn.commit()
 
+    def remove_topic(self, tag):
+        self.conn.execute("DELETE FROM topics WHERE tag=?", (tag,))
+        self.conn.commit()
+
     def list_topics(self):
         return [r["tag"] for r in self.conn.execute("SELECT tag FROM topics ORDER BY tag")]
 
     def add_occasion(self, tag):
         self.conn.execute("INSERT OR IGNORE INTO occasions (tag) VALUES (?)", (tag,))
+        self.conn.commit()
+
+    def remove_occasion(self, tag):
+        self.conn.execute("DELETE FROM occasions WHERE tag=?", (tag,))
         self.conn.commit()
 
     def list_occasions(self):
@@ -352,6 +375,15 @@ class Engine:
         self.conn.execute("DELETE FROM allowlist")
         for o in outlets:
             self.conn.execute("INSERT OR IGNORE INTO allowlist (outlet) VALUES (?)", (o,))
+        self.conn.commit()
+
+    def add_allowlist(self, outlet):
+        if outlet:
+            self.conn.execute("INSERT OR IGNORE INTO allowlist (outlet) VALUES (?)", (outlet,))
+            self.conn.commit()
+
+    def remove_allowlist(self, outlet):
+        self.conn.execute("DELETE FROM allowlist WHERE outlet=?", (outlet,))
         self.conn.commit()
 
     def allowlist(self):
@@ -577,9 +609,9 @@ class Engine:
             j["status"] = "cancelled"
             j["finished"] = _iso(self.now())
             self._save_job(j)
-            return Result(ok=True, job=self.get_job(job_id))
+            return Result(ok=True, job=self.get_job(job_id), message=COPY["cancel_toast"])
         self._stop_job(job_id, status="cancelled", error=None)
-        return Result(ok=True, job=self.get_job(job_id))
+        return Result(ok=True, job=self.get_job(job_id), message=COPY["cancel_toast"])
 
     def drain(self):
         if not self.worker_available:
@@ -1035,6 +1067,18 @@ class Engine:
         if filters.get("occasion"):
             sql += " AND occasion=?"
             args.append(filters["occasion"])
+        if filters.get("event_start"):
+            sql += " AND event_time>=?"
+            args.append(str(filters["event_start"]))
+        if filters.get("event_end"):
+            sql += " AND event_time<=?"
+            args.append(str(filters["event_end"]) + "T23:59:59")
+        if filters.get("pub_start") or filters.get("published_start"):
+            sql += " AND published_time>=?"
+            args.append(str(filters.get("pub_start") or filters.get("published_start")))
+        if filters.get("pub_end") or filters.get("published_end"):
+            sql += " AND published_time<=?"
+            args.append(str(filters.get("pub_end") or filters.get("published_end")) + "T23:59:59")
         if filters.get("term"):
             sql += " AND term=?"
             args.append(filters["term"])
@@ -1083,11 +1127,21 @@ class Engine:
             out.append(item)
         return out
 
-    def list_artifacts(self, record_id=None):
+    def list_artifacts(self, record_id=None, job_id=None):
         if record_id:
             rows = self.conn.execute("SELECT * FROM artifacts WHERE record_id=?", (record_id,)).fetchall()
+        elif job_id:
+            rows = self.conn.execute("SELECT * FROM artifacts WHERE job_id=?", (job_id,)).fetchall()
         else:
             rows = self.conn.execute("SELECT * FROM artifacts").fetchall()
+        return [dict(r) for r in rows]
+
+    def records_for_job(self, job_id):
+        rows = self.conn.execute("SELECT * FROM records WHERE job_id=?", (job_id,)).fetchall()
+        return [self._row_record(r) for r in rows]
+
+    def quarantine_for_job(self, job_id):
+        rows = self.conn.execute("SELECT * FROM quarantine WHERE job_id=?", (job_id,)).fetchall()
         return [dict(r) for r in rows]
 
     def get_preference(self, topic):
@@ -1162,10 +1216,7 @@ class Engine:
         row = self.conn.execute("SELECT last_succeeded_at FROM sources WHERE id=?", (source,)).fetchone()
         last = _parse_dt(row["last_succeeded_at"] if row else None)
         if last is None:
-            for covers in COVERING.values():
-                if source in covers:
-                    return True
-            return False
+            return True
         now = self.now()
         if cad == "daily":
             return weekdays_between(last, now) > 1
@@ -1179,7 +1230,7 @@ class Engine:
         row = self.conn.execute("SELECT last_succeeded_at FROM sources WHERE id=?", (source,)).fetchone()
         last = _parse_dt(row["last_succeeded_at"] if row else None)
         if last is None:
-            return False
+            return True
         return (self.now() - last) > timedelta(hours=24)
 
     def source_health(self):
@@ -1190,6 +1241,22 @@ class Engine:
             last_empty = _parse_dt(row["last_succeeded_empty_at"]) if row else None
             count = self.conn.execute("SELECT COUNT(*) n FROM records WHERE source=?", (s,)).fetchone()["n"]
             cad = CADENCE.get(s)
+            if cad is None:
+                cadence_age = None
+                age_24h = None
+            elif last is None:
+                cadence_age = "never succeeded"
+                age_24h = "never succeeded"
+            else:
+                now = self.now()
+                if cad == "daily":
+                    n = weekdays_between(last, now)
+                    cadence_age = f"{n} weekday" + ("" if n == 1 else "s")
+                else:
+                    n = (now - last).days
+                    cadence_age = f"{n} day" + ("" if n == 1 else "s")
+                hours = int((now - last).total_seconds() // 3600)
+                age_24h = f"{hours}h"
             out[s] = {
                 "id": s,
                 "enabled": bool(row["enabled"]) if row else True,
@@ -1200,6 +1267,8 @@ class Engine:
                 "cadence": "none" if cad is None else cad,
                 "cadence_stale": self._cadence_stale(s),
                 "stale_24h": self._stale_24h(s),
+                "cadence_age": cadence_age,
+                "age_24h": age_24h,
                 "clean_count": count,
             }
         return out
