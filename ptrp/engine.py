@@ -157,6 +157,7 @@ class Engine:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._in_flight = {}
+        self._working = set()
 
     def now(self):
         if self.probe_clock is not None:
@@ -913,6 +914,11 @@ class Engine:
         if not self._worker_down_or_job_not_running(job_id):
             return False
         latest = self.get_job(job_id)
+        # S6 is for failed/cancelled/worker_lost only. Overlapping _work after
+        # succeed must not job_stopped locators already counted as unchanged.
+        if latest["status"] in ("succeeded", "succeeded_empty"):
+            self._in_flight.pop(job_id, None)
+            return True
         if fetched is not None:
             latest["fetched"] = fetched
         self._s6_quarantine_remaining(latest, remaining)
@@ -927,6 +933,15 @@ class Engine:
         return True
 
     def _work(self, job_id, stay_running=False):
+        if job_id in self._working:
+            return
+        self._working.add(job_id)
+        try:
+            self._execute_job(job_id, stay_running=stay_running)
+        finally:
+            self._working.discard(job_id)
+
+    def _execute_job(self, job_id, stay_running=False):
         j = self.get_job(job_id)
         if j["status"] != "running":
             return
@@ -1010,10 +1025,27 @@ class Engine:
             todo.pop(0)
             self._in_flight[job_id] = [it] + list(todo)
             self._store_artifact(j, it)
+            accounted = (
+                j.get("written", 0)
+                + j.get("updated", 0)
+                + j.get("unchanged", 0)
+                + j.get("quarantined", 0)
+                + j.get("fetch_fail", 0)
+            )
             self._process_item(j, it, force)
+            accounted_after = (
+                j.get("written", 0)
+                + j.get("updated", 0)
+                + j.get("unchanged", 0)
+                + j.get("quarantined", 0)
+                + j.get("fetch_fail", 0)
+            )
             leftover = []
             if self._worker_down_or_job_not_running(job_id):
-                if not self._locator_written_clean_by_job(it.get("locator"), job_id):
+                handled = accounted_after > accounted or self._locator_written_clean_by_job(
+                    it.get("locator"), job_id
+                )
+                if not handled:
                     leftover.append(it)
                 leftover.extend(todo)
                 if self._abort_stopped_work(job_id, leftover, fetched=len(items)):
