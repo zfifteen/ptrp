@@ -516,7 +516,8 @@ class Engine:
         if now_et.hour != CLOCK_HOUR or now_et.minute != CLOCK_MINUTE:
             return
         tick_key = now_et.strftime("%Y-%m-%dT09:00")
-        if self._meta_get("last_schedule_tick") == tick_key:
+        last = self._meta_get("last_schedule_tick")
+        if last and last >= tick_key:
             return
         is_monday = now_et.weekday() == 0
         enqueued = 0
@@ -1137,8 +1138,27 @@ class Engine:
             if existing["text_hash"] == rec["text_hash"] and not force:
                 j["unchanged"] = j.get("unchanged", 0) + 1
             else:
-                ver = int(existing["text_version"]) + 1
-                rec["text_version"] = ver
+                prev = existing["text_version"]
+                try:
+                    prev_n = int(prev) if prev is not None and str(prev).strip() != "" else 0
+                except (TypeError, ValueError):
+                    prev_n = 0
+                if prev_n < 1:
+                    stored = self.conn.execute(
+                        "SELECT 1 FROM record_versions WHERE record_id=? AND text_version=1",
+                        (record_id,),
+                    ).fetchone()
+                    if not stored:
+                        self._save_version({
+                            "record_id": record_id,
+                            "text_version": 1,
+                            "text": existing["text"],
+                            "text_hash": existing["text_hash"],
+                            "job_id": existing["job_id"],
+                            "created_at": existing["created_at"] or rec["created_at"],
+                        })
+                    prev_n = 1
+                rec["text_version"] = prev_n + 1
                 self._upsert_record(rec)
                 self._save_version(rec)
                 j["updated"] = j.get("updated", 0) + 1
