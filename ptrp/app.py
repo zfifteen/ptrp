@@ -79,7 +79,7 @@ def chrome(engine, active, body, extra_banner="", overlay=None):
         ("/records", "Records", "records"),
         ("/quarantine", "Quarantine", "quarantine"),
     ):
-        cls = ' class="active"' if active == key else ""
+        cls = ' class="nav-item active"' if active == key else ' class="nav-item"'
         nav.append(f'<a href="{href}"{cls}>{label}</a>')
     clock = format_et(engine.now())
     if engine.worker_available:
@@ -103,40 +103,246 @@ def chrome(engine, active, body, extra_banner="", overlay=None):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>PTRP</title>
 <style>
-body{{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;color:#111}}
-header{{display:flex;gap:1rem;align-items:center;padding:.75rem 1rem;border-bottom:1px solid #ddd}}
-#product{{font-weight:700;letter-spacing:.04em}}
-nav a{{margin-right:.75rem;text-decoration:none;color:#333}}
-nav a.active{{font-weight:700;border-bottom:2px solid #111}}
-.banner{{background:#111;color:#fff;padding:.5rem 1rem}}
-.pill{{display:inline-block;padding:.1rem .4rem;border-radius:999px;border:1px solid #888;font-variant-numeric:tabular-nums}}
-.pill.succeeded_empty{{background:#e8f5e9}}
-.pill.succeeded{{background:#c8e6c9}}
-.pill.failed{{background:#ffebee}}
-.overlay{{border:1px solid #ccc;padding:.75rem;margin:1rem 0;background:#fafafa}}
-.overlay[hidden],.overlay.is-hidden{{display:none}}
-.helper{{color:#444;font-size:.9rem}}
-.error{{color:#a00}}
-.toast{{background:#e8f5e9;padding:.5rem;margin:.5rem 0}}
-button:disabled{{opacity:.5}}
-.kind-tile{{display:inline-block;min-width:6rem;border:1px solid #ddd;padding:.5rem;margin:.25rem}}
-main{{padding:1rem}}
-table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}
-th,td{{border-bottom:1px solid #eee;padding:.35rem .4rem;text-align:left}}
+:root {{
+  --void: #06070c;
+  --bg: #080a12;
+  --surf: #151c2c;
+  --line: rgba(228, 197, 106, 0.12);
+  --line-2: rgba(240, 215, 140, 0.22);
+  --hair: rgba(244, 226, 164, 0.42);
+  --tx: #f2f5fa;
+  --tx-dim: #9aa7b8;
+  --tx-mute: #6b7788;
+  --brass: #e8c86a;
+  --brass-2: #c9a43a;
+  --brass-hi: #f6e4a8;
+  --brass-fill: linear-gradient(180deg, #f3d98a 0%, #c9a43a 100%);
+  --glow: rgba(232, 200, 106, 0.22);
+  --ok: #6fdb9a;
+  --ok-bg: rgba(111, 219, 154, 0.12);
+  --empty: #7dcec4;
+  --empty-bg: rgba(125, 206, 196, 0.12);
+  --run: #6ec4ef;
+  --run-bg: rgba(110, 196, 239, 0.14);
+  --warn: #e8c36a;
+  --warn-bg: rgba(232, 195, 106, 0.14);
+  --bad: #ff6b6b;
+  --bad-bg: rgba(255, 107, 107, 0.14);
+  --off: #9aa3ad;
+  --off-bg: rgba(154, 163, 173, 0.12);
+  --r: 12px;
+  --r-sm: 8px;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--brass), 0 0 18px var(--glow);
+}}
+* {{ box-sizing: border-box; }}
+html {{ height: 100%; }}
+body {{
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 0;
+  color: var(--tx);
+  background-color: var(--void);
+  background-image:
+    radial-gradient(ellipse 920px 520px at 8% -12%, rgba(232, 200, 106, 0.18), transparent 58%),
+    radial-gradient(ellipse 760px 480px at 100% 0%, rgba(64, 110, 190, 0.14), transparent 52%),
+    radial-gradient(ellipse 640px 520px at 70% 115%, rgba(232, 200, 106, 0.07), transparent 55%),
+    linear-gradient(rgba(232, 200, 106, 0.038) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 200, 106, 0.038) 1px, transparent 1px);
+  background-size: auto, auto, auto, 42px 42px, 42px 42px;
+  background-attachment: fixed;
+  font-variant-numeric: tabular-nums;
+}}
+.app {{
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-rows: 56px 1fr;
+  min-height: 100%;
+}}
+.chrome {{
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 22px;
+  height: 56px;
+  background:
+    radial-gradient(ellipse 560px 90px at 10% 130%, rgba(232, 200, 106, 0.16), transparent 70%),
+    linear-gradient(180deg, rgba(22, 28, 42, 0.94), rgba(9, 12, 20, 0.98));
+  border-bottom: 1px solid var(--hair);
+  box-shadow: 0 1px 0 rgba(255, 232, 160, 0.08);
+}}
+.brand {{ display: flex; align-items: center; gap: 12px; min-width: 168px; }}
+.brand-mark {{
+  width: 9px; height: 28px;
+  background: var(--brass-fill);
+  border-radius: 2px;
+  box-shadow: 0 0 20px rgba(232, 200, 106, 0.6);
+}}
+.brand-lockup {{ display: flex; flex-direction: column; line-height: 1; }}
+.brand-name, #product {{
+  font-weight: 750;
+  letter-spacing: 0.36em;
+  font-size: 15px;
+  color: var(--brass-hi);
+}}
+.brand-sub {{
+  color: var(--tx-dim);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-top: 5px;
+}}
+.chrome-mid {{ display: flex; align-items: center; gap: 10px; flex: 1; }}
+#job-snapshot {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+#clock {{ color: var(--tx-dim); font-size: 12px; }}
+nav {{
+  width: 220px;
+  background: linear-gradient(180deg, rgba(11, 16, 26, 0.94), rgba(6, 8, 14, 0.98));
+  border-right: 1px solid var(--line);
+  padding: 16px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}}
+nav a, nav a.nav-item {{
+  text-align: left;
+  text-decoration: none;
+  color: var(--tx-dim);
+  padding: 11px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+}}
+nav a:hover {{ color: var(--tx); background: rgba(232, 200, 106, 0.07); }}
+nav a.active {{
+  color: var(--brass-hi);
+  background: linear-gradient(90deg, rgba(232, 200, 106, 0.18), rgba(232, 200, 106, 0.04));
+  border-color: var(--line-2);
+  box-shadow: inset 3px 0 0 var(--brass);
+}}
+.main {{ min-width: 0; background: transparent; }}
+a {{ color: var(--brass); text-decoration: none; }}
+a:hover {{ color: var(--brass-hi); }}
+button, input, select, textarea {{ font: inherit; color: inherit; }}
+button {{
+  cursor: pointer;
+  background: #1c2538;
+  border: 1px solid var(--line-2);
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  color: var(--tx);
+}}
+button:hover {{ border-color: var(--brass); box-shadow: 0 0 14px var(--glow); }}
+input, select, textarea {{
+  background: rgba(6, 8, 14, 0.72);
+  border: 1px solid var(--line-2);
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  color: var(--tx);
+}}
+.banner {{ background: linear-gradient(90deg, rgba(90, 18, 18, 0.88), rgba(40, 8, 8, 0.55)); color: var(--bad); padding: .5rem 1rem; }}
+.pill {{
+  display: inline-flex; align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}}
+.pill.succeeded_empty {{ background: var(--empty-bg); color: var(--empty); border-color: rgba(125, 206, 196, 0.28); }}
+.pill.succeeded {{ background: var(--ok-bg); color: var(--ok); }}
+.pill.failed {{ background: var(--bad-bg); color: var(--bad); }}
+.pill.queued {{ background: var(--warn-bg); color: var(--warn); }}
+.pill.running {{ background: var(--run-bg); color: var(--run); }}
+.pill.cancelled {{ background: var(--off-bg); color: var(--off); }}
+#q-badge {{
+  display: inline-flex; align-items: center;
+  background: rgba(20, 28, 42, 0.7);
+  border: 1px solid var(--line-2);
+  padding: 6px 12px; color: var(--tx);
+  border-radius: 999px;
+}}
+.tile, .kind-tile {{
+  background: linear-gradient(180deg, rgba(30, 40, 58, 0.72), rgba(16, 22, 34, 0.88));
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  position: relative;
+  padding: 16px 14px 14px;
+  overflow: hidden;
+}}
+.tile::before {{
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, var(--brass-hi), var(--brass-2), transparent 88%);
+}}
+.tile .k {{
+  color: var(--tx-mute);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 650;
+}}
+.tile .v {{
+  font-size: 32px;
+  font-weight: 720;
+  margin-top: 8px;
+  letter-spacing: -0.04em;
+  color: var(--tx);
+}}
+#kind-totals {{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }}
+#kind-totals .tile {{ min-height: 92px; }}
+.overlay {{
+  border: 1px solid var(--hair);
+  padding: .75rem;
+  margin: 1rem 0;
+  background: linear-gradient(180deg, rgba(30, 40, 58, 0.94), rgba(12, 16, 26, 0.97));
+  color: var(--tx);
+}}
+.drawer, .overlay.drawer, #ov-job.drawer, #ov-record.drawer, #ov-qitem.drawer {{
+  background: linear-gradient(180deg, rgba(18, 26, 40, 0.72), rgba(8, 11, 18, 0.86));
+  backdrop-filter: blur(22px) saturate(1.25);
+  border-left: 1px solid var(--hair);
+  box-shadow: -28px 0 80px rgba(0, 0, 0, 0.5), inset 1px 0 0 rgba(255, 232, 160, 0.12);
+}}
+.overlay[hidden], .overlay.is-hidden {{ display: none; }}
+.helper {{ color: var(--tx-dim); font-size: .9rem; }}
+.error {{ color: var(--bad); }}
+.toast {{ background: var(--ok-bg); color: var(--ok); padding: .5rem; margin: .5rem 0; }}
+button:disabled {{ opacity: .5; }}
+main {{ padding: 1.5rem 1.75rem 3rem; }}
+table {{ border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }}
+th, td {{ border-bottom: 1px solid var(--line); padding: .35rem .4rem; text-align: left; }}
+th {{ color: var(--tx-mute); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }}
 </style></head>
 <body>
-<header>
-  <span id="product">PTRP</span>
-  <span id="worker-pill" class="pill">{pill}</span>
-  {worker_btn}
-  <a id="q-badge" href="/quarantine">{qn}</a>
-  <nav>{''.join(nav)}</nav>
+<div class="app">
+<header class="chrome">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <div class="brand-lockup">
+      <span id="product" class="brand-name">PTRP</span>
+      <span class="brand-sub">operator</span>
+    </div>
+  </div>
+  <div class="chrome-mid">
+    <span id="worker-pill" class="pill">{pill}</span>
+    {worker_btn}
+    <a id="q-badge" href="/quarantine">{qn}</a>
+  </div>
   <span id="clock">{clock}</span>
 </header>
+<nav>{''.join(nav)}</nav>
+<div class="main">
 {banner}
 {ov_ws}
 <main>{body}</main>
+</div>
+</div>
 </body></html>"""
+
 
 
 def _load_error_body(screen: str) -> str:
@@ -151,7 +357,7 @@ def render_dashboard(engine: Engine, overlay=None) -> str:
         return chrome(engine, "dashboard", _load_error_body("Dashboard"), overlay=overlay)
     d = engine.dashboard()
     tiles = "".join(
-        f'<div class="kind-tile" data-kind="{k}"><div>{k}</div><div>{d["kinds"].get(k, 0)}</div></div>'
+        f'<div class="tile kind-tile" data-kind="{k}"><div class="k">{k}</div><div class="v">{d["kinds"].get(k, 0)}</div></div>'
         for k in KINDS
     )
     newest = COPY["newest_none"] if not d["newest"] else f'Newest clean record {format_et(d["newest"])}'
@@ -434,7 +640,7 @@ def render_control(engine: Engine, request: Request, error="", toast="", overlay
             rec_links = " ".join(f'<a href="/records?record={r["record_id"]}">{r["record_id"]}</a>' for r in recs) or "—"
             q_links = " ".join(f'<a href="/quarantine?item={q["id"]}">{q["id"]}</a>' for q in qs) or "—"
             job_detail = f"""
-<div id="ov-job" class="overlay">
+<div id="ov-job" class="overlay drawer">
   <p>{j["id"]} {j["type"]} {j["source"]} <span class="pill {j["status"]}">{j["status"]}</span> {j["triggered_by"]}</p>
   <p>params {_esc(j["params"])}</p>
   <p>created {format_et(_parse_maybe(j["created"]))} started {format_et(_parse_maybe(j.get("started")))} finished {format_et(_parse_maybe(j.get("finished")))}</p>
@@ -695,7 +901,7 @@ def render_records(engine: Engine, request: Request, overlay=None) -> str:
             books_h = COPY["books_helper"] if rec["channel"] == "other" else ""
             topics = rec.get("topics") or []
             drawer = f"""
-<div id="ov-record" class="overlay">
+<div id="ov-record" class="overlay drawer">
   <p>{rec["record_id"]} {rec["kind"]} {rec["source"]} {rec["channel"]} completeness {rec["completeness"]}
      mention-usable {rec["mention_usable"]} decision-usable {rec["decision_usable"]}</p>
   <div id="record-text">{_esc(rec["text"])}</div>
@@ -780,7 +986,8 @@ def render_quarantine(engine: Engine, request: Request, overlay=None) -> str:
             if q["failed_rule"] == "job_stopped":
                 helper = COPY["job_stopped_accept"]
             drawer = f"""
-<div id="{oid}" class="overlay">
+<div id="ov-qitem" class="overlay drawer">
+  <div id="{oid}">
   <p>{_esc(q["locator"])} {q["source"]} {q["failed_rule"]} {q["reason"]}</p>
   <p>fields (read-only) {_esc(q.get("fields"))}</p>
   <form method="post" action="/quarantine/{q["id"]}/accept">
@@ -788,6 +995,7 @@ def render_quarantine(engine: Engine, request: Request, overlay=None) -> str:
   </form>
   <p class="helper">{helper}</p>
   <form method="post" action="/quarantine/{q["id"]}/discard"><button>Discard</button></form>
+  </div>
 </div>"""
     body = f"""
 <form id="q-reason" method="get" action="/quarantine">
